@@ -495,7 +495,7 @@ function parseXlsxRows(data: ArrayBuffer): ParsedQuestionRow[] {
 
 function App() {
   const [authUser, setAuthUser] = useState<User | null>(getCurrentUser())
-  const email = 'iop3367@naver.com'
+  const [email, setEmail] = useState('iop3367@naver.com')
   const [password, setPassword] = useState('ClassQuest123!')
   const [authError, setAuthError] = useState('')
   const [publicStudentItems, setPublicStudentItems] = useState<PublicStudentLoginItem[]>([])
@@ -1707,12 +1707,13 @@ function App() {
   const handleAuthSubmit = async () => {
     setAuthError('')
 
-    if (email.trim().toLowerCase() !== 'iop3367@naver.com') {
-      setAuthError('등록된 교사 계정으로만 로그인할 수 있습니다.')
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail) {
+      setAuthError('이메일을 입력해 주세요.')
       return
     }
 
-    const result = await signIn(email, password)
+    const result = await signIn(normalizedEmail, password)
 
     if (!result.success) {
       setAuthError(result.error ?? '로그인에 실패했습니다.')
@@ -1720,9 +1721,7 @@ function App() {
     }
 
     setAuthUser(getCurrentUser())
-    if (result.token) {
-      window.location.href = '/dashboard'
-    }
+    setActiveMenu('학생 목록')
   }
 
   const openCreateCardModal = (cardType: 'praise' | 'warning') => {
@@ -4456,9 +4455,10 @@ function App() {
                   <div className="space-y-3 rounded-2xl border border-[#34567c] bg-[#10253e]/90 p-4">
                     <h2 className="flex items-center gap-2 text-sm font-semibold text-[#e3efff]"><LogIn className="size-4" /> 교사 로그인</h2>
                     <input
-                      className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#9db8d8]"
+                      className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#eaf2ff]"
                       value={email}
-                      readOnly
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="교사 이메일"
                     />
                     <input
                       className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#eaf2ff]"
