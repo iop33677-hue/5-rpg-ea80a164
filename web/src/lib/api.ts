@@ -272,6 +272,10 @@ export interface StudentActivity {
   created_at: string
 }
 
+export type TitleAchievementMode = 'manual' | 'auto'
+
+export type TitleAutoConditionType = 'none' | 'card_issue_count' | 'stat_threshold'
+
 export interface TitleDefinition {
   id: number
   title_name: string
@@ -285,6 +289,11 @@ export interface TitleDefinition {
   icon_content_type: string | null
   reward_exp: number
   reward_won: number
+  achievement_mode: TitleAchievementMode
+  auto_condition_type: TitleAutoConditionType
+  condition_card_id: number | null
+  condition_stat_key: string | null
+  condition_target_count: number | null
   is_active: boolean
   recipient_count: number
   created_at: string

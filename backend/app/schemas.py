@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -305,7 +305,29 @@ class TitleDefinitionBase(BaseSchema):
     icon_content_type: str | None = Field(default=None, max_length=120)
     reward_exp: int = Field(default=40, ge=0, le=5000)
     reward_won: int = Field(default=80, ge=0, le=50000)
+    achievement_mode: Literal["manual", "auto"] = "manual"
+    auto_condition_type: Literal["none", "card_issue_count", "stat_threshold"] = "none"
+    condition_card_id: int | None = Field(default=None, ge=1)
+    condition_stat_key: str | None = Field(default=None, max_length=40)
+    condition_target_count: int | None = Field(default=None, ge=1, le=999999)
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_auto_condition(self) -> "TitleDefinitionBase":
+        if self.achievement_mode == "manual":
+            return self
+
+        if self.auto_condition_type == "card_issue_count":
+            if self.condition_card_id is None or self.condition_target_count is None:
+                raise ValueError("자동 칭호(카드 횟수)는 카드 ID와 목표 횟수가 필요합니다.")
+            return self
+
+        if self.auto_condition_type == "stat_threshold":
+            if not self.condition_stat_key or self.condition_target_count is None:
+                raise ValueError("자동 칭호(스탯 도달)는 스탯 키와 목표 수치가 필요합니다.")
+            return self
+
+        raise ValueError("자동 칭호는 올바른 자동 달성 조건을 선택해야 합니다.")
 
 
 class TitleDefinitionCreate(TitleDefinitionBase):
@@ -324,6 +346,11 @@ class TitleDefinitionUpdate(BaseSchema):
     icon_content_type: str | None = Field(default=None, max_length=120)
     reward_exp: int | None = Field(default=None, ge=0, le=5000)
     reward_won: int | None = Field(default=None, ge=0, le=50000)
+    achievement_mode: Literal["manual", "auto"] | None = None
+    auto_condition_type: Literal["none", "card_issue_count", "stat_threshold"] | None = None
+    condition_card_id: int | None = Field(default=None, ge=1)
+    condition_stat_key: str | None = Field(default=None, max_length=40)
+    condition_target_count: int | None = Field(default=None, ge=1, le=999999)
     is_active: bool | None = None
 
     @model_validator(mode="after")
@@ -340,9 +367,27 @@ class TitleDefinitionUpdate(BaseSchema):
             and self.icon_content_type is None
             and self.reward_exp is None
             and self.reward_won is None
+            and self.achievement_mode is None
+            and self.auto_condition_type is None
+            and self.condition_card_id is None
+            and self.condition_stat_key is None
+            and self.condition_target_count is None
             and self.is_active is None
         ):
             raise ValueError("수정할 칭호 정보를 하나 이상 입력해야 합니다.")
+
+        next_mode = self.achievement_mode
+        if next_mode == "auto":
+            next_condition_type = self.auto_condition_type
+            if next_condition_type == "card_issue_count":
+                if self.condition_card_id is None or self.condition_target_count is None:
+                    raise ValueError("자동 칭호(카드 횟수)는 카드 ID와 목표 횟수가 필요합니다.")
+            elif next_condition_type == "stat_threshold":
+                if not self.condition_stat_key or self.condition_target_count is None:
+                    raise ValueError("자동 칭호(스탯 도달)는 스탯 키와 목표 수치가 필요합니다.")
+            elif next_condition_type is not None:
+                raise ValueError("자동 칭호는 올바른 자동 달성 조건을 선택해야 합니다.")
+
         return self
 
 

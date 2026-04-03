@@ -85,6 +85,8 @@ import {
   type StudentEconomyUpdatePayload,
   type StudentLoginAccount,
   type StudentTitleRecipient,
+  type TitleAchievementMode,
+  type TitleAutoConditionType,
   type TitleDefinition,
   type TitleIssueResult,
   type UploadContract,
@@ -128,6 +130,11 @@ interface TitleFormState {
   frame_key: string
   reward_exp: string
   reward_won: string
+  achievement_mode: TitleAchievementMode
+  auto_condition_type: TitleAutoConditionType
+  condition_card_id: string
+  condition_stat_key: string
+  condition_target_count: string
   icon_public_url: string | null
   icon_object_key: string | null
   icon_original_filename: string | null
@@ -334,6 +341,11 @@ const emptyTitleForm = (): TitleFormState => ({
   frame_key: titleFramePresets[0]?.key ?? 'royal',
   reward_exp: '40',
   reward_won: '80',
+  achievement_mode: 'manual',
+  auto_condition_type: 'none',
+  condition_card_id: '',
+  condition_stat_key: missionStatOptions[0]?.key ?? 'diligence',
+  condition_target_count: '1',
   icon_public_url: null,
   icon_object_key: null,
   icon_original_filename: null,
@@ -543,6 +555,7 @@ function App() {
   const [selectedEarnedTitleId, setSelectedEarnedTitleId] = useState<number | null>(null)
   const [activityFilter, setActivityFilter] = useState<ActivityFilterKey>('all')
   const [classTitles, setClassTitles] = useState<TitleDefinition[]>([])
+  const [titleFilterMode, setTitleFilterMode] = useState<TitleAchievementMode>('manual')
   const [titleTabError, setTitleTabError] = useState('')
   const [titleTabMessage, setTitleTabMessage] = useState('')
   const [showTitleEditorModal, setShowTitleEditorModal] = useState(false)
@@ -674,6 +687,16 @@ function App() {
   const activeCardIconPresets = useMemo(
     () => cardIconPresetsByType[activeCardTab],
     [activeCardTab],
+  )
+
+  const filteredClassTitles = useMemo(
+    () =>
+      classTitles.filter((title) =>
+        titleFilterMode === 'manual'
+          ? title.achievement_mode !== 'auto'
+          : title.achievement_mode === 'auto',
+      ),
+    [classTitles, titleFilterMode],
   )
 
   const getTitleRewardConfig = (titleId: number): TitleRewardConfig => {
@@ -1206,6 +1229,11 @@ function App() {
       frame_key: title.frame_key ?? titleFramePresets[0]?.key ?? 'royal',
       reward_exp: String(title.reward_exp),
       reward_won: String(title.reward_won),
+      achievement_mode: title.achievement_mode,
+      auto_condition_type: title.auto_condition_type,
+      condition_card_id: title.condition_card_id ? String(title.condition_card_id) : '',
+      condition_stat_key: title.condition_stat_key ?? missionStatOptions[0]?.key ?? 'diligence',
+      condition_target_count: title.condition_target_count ? String(title.condition_target_count) : '1',
       icon_public_url: title.icon_public_url,
       icon_object_key: title.icon_object_key,
       icon_original_filename: title.icon_original_filename,
@@ -1270,6 +1298,38 @@ function App() {
       return
     }
 
+    let parsedConditionCardId: number | null = null
+    let parsedConditionStatKey: string | null = null
+    let parsedConditionTargetCount: number | null = null
+
+    if (titleForm.achievement_mode === 'auto') {
+      const parsedTargetCount = Number(titleForm.condition_target_count)
+      if (!Number.isFinite(parsedTargetCount) || parsedTargetCount < 1) {
+        setTitleTabError('자동 달성 목표 횟수/수치는 1 이상의 숫자로 입력해 주세요.')
+        return
+      }
+      parsedConditionTargetCount = Math.floor(parsedTargetCount)
+
+      if (titleForm.auto_condition_type === 'card_issue_count') {
+        const parsedCardId = Number(titleForm.condition_card_id)
+        if (!Number.isFinite(parsedCardId) || parsedCardId < 1) {
+          setTitleTabError('자동 달성 카드 조건은 발급 기준 카드를 선택해야 합니다.')
+          return
+        }
+        parsedConditionCardId = Math.floor(parsedCardId)
+      } else if (titleForm.auto_condition_type === 'stat_threshold') {
+        const statKey = titleForm.condition_stat_key.trim()
+        if (!statKey) {
+          setTitleTabError('자동 달성 스탯 조건은 기준 스탯을 선택해야 합니다.')
+          return
+        }
+        parsedConditionStatKey = statKey
+      } else {
+        setTitleTabError('자동 달성 조건 유형을 선택해 주세요.')
+        return
+      }
+    }
+
     setSavingTitleForm(true)
     setTitleTabError('')
 
@@ -1285,6 +1345,13 @@ function App() {
       icon_content_type: titleForm.icon_content_type,
       reward_exp: Math.floor(rewardExp),
       reward_won: Math.floor(rewardWon),
+      achievement_mode: titleForm.achievement_mode,
+      auto_condition_type:
+        titleForm.achievement_mode === 'auto' ? titleForm.auto_condition_type : 'none',
+      condition_card_id: titleForm.achievement_mode === 'auto' ? parsedConditionCardId : null,
+      condition_stat_key: titleForm.achievement_mode === 'auto' ? parsedConditionStatKey : null,
+      condition_target_count:
+        titleForm.achievement_mode === 'auto' ? parsedConditionTargetCount : null,
       is_active: true,
     }
 
@@ -3179,13 +3246,40 @@ function App() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <h3 className="font-heading text-xl font-semibold text-[#12345c]">칭호 관리</h3>
-                        <p className="text-sm text-[#4a678a]">미션/카드 탭과 맞춘 톤으로 칭호 생성, 조건 관리, 학생 발급을 통합합니다.</p>
+                        <p className="text-sm text-[#4a678a]">칭호 탭을 자동 달성 / 수동 달성으로 분리해 조건 기반 지급과 직접 발급을 함께 운영합니다.</p>
                       </div>
                       {canManageClassContent ? (
                         <Button className="h-11 cursor-pointer transition-all duration-[220ms] hover:-translate-y-0.5" onClick={openCreateTitleModal}>
                           + 새 칭호 만들기
                         </Button>
                       ) : null}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#dce7f5] pt-3">
+                      <button
+                        type="button"
+                        onClick={() => setTitleFilterMode('manual')}
+                        className={`h-10 cursor-pointer rounded-xl border px-4 text-sm font-semibold transition-all duration-[220ms] ${
+                          titleFilterMode === 'manual'
+                            ? 'border-[#f5b9d7] bg-[#ffeaf4] text-[#db2f85]'
+                            : 'border-[#d8e2f0] bg-white text-[#617993] hover:bg-[#f5f9ff]'
+                        }`}
+                      >
+                        수동 달성
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTitleFilterMode('auto')}
+                        className={`h-10 cursor-pointer rounded-xl border px-4 text-sm font-semibold transition-all duration-[220ms] ${
+                          titleFilterMode === 'auto'
+                            ? 'border-[#b7cbef] bg-[#e8f2ff] text-[#2f60bf]'
+                            : 'border-[#d8e2f0] bg-white text-[#617993] hover:bg-[#f5f9ff]'
+                        }`}
+                      >
+                        자동 달성
+                      </button>
+                      <p className="text-xs text-[#6d84a0]">
+                        현재 보기: {titleFilterMode === 'manual' ? '교사가 직접 발급하는 칭호' : '조건 충족 시 자동 지급되는 칭호'}
+                      </p>
                     </div>
                   </div>
 
@@ -3197,7 +3291,7 @@ function App() {
                   ) : null}
 
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {classTitles.map((title) => {
+                    {filteredClassTitles.map((title) => {
                       const matchedPreset = titleIconPresets.find((preset) => preset.key === title.icon_key)
                       const IconComponent = matchedPreset?.icon ?? Medal
                       const frameClass =
@@ -3249,6 +3343,13 @@ function App() {
 
                           <p className="text-sm font-semibold text-[#123458]">{title.title_name}</p>
                           <p className="mt-1 text-xs text-[#5c7594]">조건: {title.condition_text}</p>
+                          <p className="mt-1 text-[11px] text-[#4d6788]">
+                            {title.achievement_mode === 'auto'
+                              ? title.auto_condition_type === 'card_issue_count'
+                                ? `자동 조건: 카드 #${title.condition_card_id ?? '-'} ${title.condition_target_count ?? '-'}회 발급`
+                                : `자동 조건: ${studentStatLabelMap[title.condition_stat_key ?? ''] ?? title.condition_stat_key ?? '스탯'} ${title.condition_target_count ?? '-'} 이상`
+                              : '수동 조건: 교사가 직접 발급'}
+                          </p>
                           <p className="mt-1 min-h-[32px] text-xs text-[#6a7f98]">{title.description || '설명 없음'}</p>
 
                           <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
@@ -3265,9 +3366,15 @@ function App() {
 
                           {canManageClassContent ? (
                             <div className="mt-3 flex items-center gap-2">
-                              <Button className="h-10 flex-1 cursor-pointer bg-[#244f85] text-white hover:bg-[#1f446f]" onClick={() => void handleOpenIssueModal(title)}>
-                                <Gift className="mr-1 size-4" /> 발급
-                              </Button>
+                              {title.achievement_mode === 'manual' ? (
+                                <Button className="h-10 flex-1 cursor-pointer bg-[#244f85] text-white hover:bg-[#1f446f]" onClick={() => void handleOpenIssueModal(title)}>
+                                  <Gift className="mr-1 size-4" /> 발급
+                                </Button>
+                              ) : (
+                                <div className="flex h-10 flex-1 items-center justify-center rounded-lg border border-[#c8d7ea] bg-[#eef5ff] text-xs font-semibold text-[#315f98]">
+                                  자동 조건 충족 시 지급
+                                </div>
+                              )}
                               <Button variant="outline" className="h-10 cursor-pointer border-[#c8d7ea] bg-white text-[#21446f] hover:bg-[#eef5ff]" onClick={() => openTitlePreviewModal(title)}>
                                 <Sparkles className="size-4" />
                               </Button>
@@ -3282,6 +3389,13 @@ function App() {
                         </div>
                       )
                     })}
+                    {filteredClassTitles.length === 0 ? (
+                      <div className="col-span-full rounded-xl border border-dashed border-[#c8d7ea] bg-[#f7fbff] px-4 py-8 text-center text-sm text-[#6c829b]">
+                        {titleFilterMode === 'manual'
+                          ? '아직 수동 달성 칭호가 없습니다. 새 칭호를 만들어 직접 발급해 보세요.'
+                          : '아직 자동 달성 칭호가 없습니다. 자동 조건을 설정해 생성해 보세요.'}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -3993,15 +4107,119 @@ function App() {
                       />
                     </label>
                     <label className="text-sm text-[#b6cbe2]">
-                      획득 조건 *
+                      획득 조건 설명 *
                       <input
                         className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff] placeholder:text-[#6f8cab]"
                         value={titleForm.condition_text}
                         onChange={(event) => setTitleForm((prev) => ({ ...prev, condition_text: event.target.value }))}
-                        placeholder="예: 미션 10회 완료"
+                        placeholder="예: 수업 발표 적극 참여 카드 10회"
                       />
                     </label>
                   </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="text-sm text-[#b6cbe2]">
+                      달성 방식
+                      <select
+                        className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff]"
+                        value={titleForm.achievement_mode}
+                        onChange={(event) => {
+                          const nextMode = event.target.value as TitleAchievementMode
+                          setTitleForm((prev) => ({
+                            ...prev,
+                            achievement_mode: nextMode,
+                            auto_condition_type: nextMode === 'auto' ? 'card_issue_count' : 'none',
+                          }))
+                        }}
+                      >
+                        <option value="manual">수동 달성 (교사가 직접 발급)</option>
+                        <option value="auto">자동 달성 (조건 충족 시 지급)</option>
+                      </select>
+                    </label>
+                    <label className="text-sm text-[#b6cbe2]">
+                      자동 조건 유형
+                      <select
+                        disabled={titleForm.achievement_mode !== 'auto'}
+                        className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff] disabled:cursor-not-allowed disabled:opacity-60"
+                        value={titleForm.auto_condition_type}
+                        onChange={(event) =>
+                          setTitleForm((prev) => ({
+                            ...prev,
+                            auto_condition_type: event.target.value as TitleAutoConditionType,
+                          }))
+                        }
+                      >
+                        <option value="none">조건 선택</option>
+                        <option value="card_issue_count">특정 칭찬카드 발급 횟수</option>
+                        <option value="stat_threshold">특정 스탯 도달</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  {titleForm.achievement_mode === 'auto' ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {titleForm.auto_condition_type === 'card_issue_count' ? (
+                        <label className="text-sm text-[#b6cbe2]">
+                          기준 카드
+                          <select
+                            className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff]"
+                            value={titleForm.condition_card_id}
+                            onChange={(event) =>
+                              setTitleForm((prev) => ({
+                                ...prev,
+                                condition_card_id: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">카드 선택</option>
+                            {cards
+                              .filter((card) => card.card_type === 'praise')
+                              .map((card) => (
+                                <option key={card.id} value={card.id}>
+                                  {card.title}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <label className="text-sm text-[#b6cbe2]">
+                          기준 스탯
+                          <select
+                            className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff]"
+                            value={titleForm.condition_stat_key}
+                            onChange={(event) =>
+                              setTitleForm((prev) => ({
+                                ...prev,
+                                condition_stat_key: event.target.value,
+                              }))
+                            }
+                          >
+                            {missionStatOptions.map((option) => (
+                              <option key={option.key} value={option.key}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+
+                      <label className="text-sm text-[#b6cbe2]">
+                        목표값
+                        <input
+                          type="number"
+                          min={1}
+                          className="mt-1 h-11 w-full rounded-xl border border-[#426186] bg-[#0d2139] px-3 text-sm text-[#e3efff]"
+                          value={titleForm.condition_target_count}
+                          onChange={(event) =>
+                            setTitleForm((prev) => ({
+                              ...prev,
+                              condition_target_count: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  ) : null}
 
                   <label className="text-sm text-[#b6cbe2]">
                     칭호 설명

@@ -154,6 +154,15 @@ ACTIVITY_LABELS: dict[str, str] = {
     "raid": "레이드기록",
 }
 
+AUTO_TITLE_STAT_FIELDS = {
+    "wisdom",
+    "creativity",
+    "personality",
+    "vitality",
+    "diligence",
+    "communication",
+}
+
 
 def _current_user_id(auth_payload: dict[str, object]) -> int | None:
     value = auth_payload.get("app_user_id")
@@ -1037,6 +1046,7 @@ def _issue_classroom_card(
         issued_count += 1
 
     _set_card_issues(db, issues)
+    _issue_auto_titles_for_students(student_ids, db)
     return ClassroomCardIssueResult(
         card_id=card_id,
         issued_count=issued_count,
@@ -1126,6 +1136,51 @@ def _get_class_title_registry_student(db: Session) -> Student | None:
     return db.query(Student).order_by(asc(Student.id)).first()
 
 
+def _normalize_title_definition(definition: dict[str, object]) -> dict[str, object]:
+    mode = str(definition.get("achievement_mode", "manual")).strip().lower()
+    if mode not in {"manual", "auto"}:
+        mode = "manual"
+
+    condition_type = str(definition.get("auto_condition_type", "none")).strip().lower()
+    if condition_type not in {"none", "card_issue_count", "stat_threshold"}:
+        condition_type = "none"
+
+    condition_card_id_raw = definition.get("condition_card_id")
+    condition_card_id = int(condition_card_id_raw) if isinstance(condition_card_id_raw, int) and condition_card_id_raw > 0 else None
+
+    condition_stat_key_raw = definition.get("condition_stat_key")
+    condition_stat_key = (
+        str(condition_stat_key_raw).strip().lower()
+        if isinstance(condition_stat_key_raw, str) and str(condition_stat_key_raw).strip()
+        else None
+    )
+
+    target_raw = definition.get("condition_target_count")
+    condition_target_count = int(target_raw) if isinstance(target_raw, int) and target_raw > 0 else None
+
+    normalized = {
+        **definition,
+        "achievement_mode": mode,
+        "auto_condition_type": condition_type,
+        "condition_card_id": condition_card_id,
+        "condition_stat_key": condition_stat_key,
+        "condition_target_count": condition_target_count,
+    }
+
+    if mode == "manual":
+        normalized["auto_condition_type"] = "none"
+        normalized["condition_card_id"] = None
+        normalized["condition_stat_key"] = None
+        normalized["condition_target_count"] = None
+
+    if mode == "auto" and condition_type == "card_issue_count":
+        normalized["condition_stat_key"] = None
+    if mode == "auto" and condition_type == "stat_threshold":
+        normalized["condition_card_id"] = None
+
+    return normalized
+
+
 def _get_class_title_definitions(db: Session) -> list[dict[str, object]]:
     registry_student = _get_class_title_registry_student(db)
     if not registry_student:
@@ -1134,7 +1189,7 @@ def _get_class_title_definitions(db: Session) -> list[dict[str, object]]:
     notes = _parse_notes(registry_student)
     definitions = _embedded_title_definitions(notes)
     if definitions:
-        return definitions
+        return [_normalize_title_definition(item) for item in definitions]
 
     now_iso = datetime.now(UTC).isoformat()
     default_definitions = [
@@ -1151,6 +1206,11 @@ def _get_class_title_definitions(db: Session) -> list[dict[str, object]]:
             "icon_content_type": None,
             "reward_exp": 40,
             "reward_won": 80,
+            "achievement_mode": "manual",
+            "auto_condition_type": "none",
+            "condition_card_id": None,
+            "condition_stat_key": None,
+            "condition_target_count": None,
             "is_active": True,
             "created_at": now_iso,
             "updated_at": now_iso,
@@ -1159,7 +1219,7 @@ def _get_class_title_definitions(db: Session) -> list[dict[str, object]]:
     notes["title_definitions"] = default_definitions
     _save_notes(registry_student, notes)
     db.commit()
-    return default_definitions
+    return [_normalize_title_definition(item) for item in default_definitions]
 
 
 def _set_class_title_definitions(db: Session, definitions: list[dict[str, object]]) -> None:
@@ -1168,7 +1228,7 @@ def _set_class_title_definitions(db: Session, definitions: list[dict[str, object
         raise HTTPException(status_code=400, detail="칭호를 저장하려면 최소 1명의 학생이 필요합니다.")
 
     notes = _parse_notes(registry_student)
-    notes["title_definitions"] = definitions
+    notes["title_definitions"] = [_normalize_title_definition(item) for item in definitions]
     _save_notes(registry_student, notes)
 
 
@@ -1227,6 +1287,23 @@ def _build_student_titles(student: Student, db: Session) -> tuple[list[TitleDefi
             ),
             "reward_exp": max(0, int(definition.get("reward_exp", 40))),
             "reward_won": max(0, int(definition.get("reward_won", 80))),
+            "achievement_mode": str(definition.get("achievement_mode", "manual")),
+            "auto_condition_type": str(definition.get("auto_condition_type", "none")),
+            "condition_card_id": (
+                int(definition.get("condition_card_id"))
+                if isinstance(definition.get("condition_card_id"), int)
+                else None
+            ),
+            "condition_stat_key": (
+                str(definition.get("condition_stat_key"))
+                if isinstance(definition.get("condition_stat_key"), str)
+                else None
+            ),
+            "condition_target_count": (
+                int(definition.get("condition_target_count"))
+                if isinstance(definition.get("condition_target_count"), int)
+                else None
+            ),
             "is_active": definition.get("is_active") is not False,
             "created_at": _parse_iso_datetime(definition.get("created_at")),
             "updated_at": _parse_iso_datetime(definition.get("updated_at")),
@@ -1247,6 +1324,11 @@ def _build_student_titles(student: Student, db: Session) -> tuple[list[TitleDefi
                 icon_content_type=item["icon_content_type"],
                 reward_exp=item["reward_exp"],
                 reward_won=item["reward_won"],
+                achievement_mode=item["achievement_mode"],
+                auto_condition_type=item["auto_condition_type"],
+                condition_card_id=item["condition_card_id"],
+                condition_stat_key=item["condition_stat_key"],
+                condition_target_count=item["condition_target_count"],
                 is_active=item["is_active"],
                 recipient_count=recipient_count_map.get(definition_id, 0),
                 created_at=item["created_at"],
@@ -2202,7 +2284,95 @@ def _title_payload_to_dict(payload: TitleDefinitionCreate | TitleDefinitionUpdat
         "icon_content_type": payload.icon_content_type,
         "reward_exp": payload.reward_exp,
         "reward_won": payload.reward_won,
+        "achievement_mode": payload.achievement_mode,
+        "auto_condition_type": payload.auto_condition_type,
+        "condition_card_id": payload.condition_card_id,
+        "condition_stat_key": payload.condition_stat_key,
+        "condition_target_count": payload.condition_target_count,
     }
+
+
+def _is_auto_title_eligible(
+    *,
+    student: Student,
+    title_definition: dict[str, object],
+    issues: list[dict[str, object]],
+) -> bool:
+    normalized = _normalize_title_definition(title_definition)
+    if normalized.get("is_active") is False:
+        return False
+
+    if normalized.get("achievement_mode") != "auto":
+        return False
+
+    condition_type = str(normalized.get("auto_condition_type", "none"))
+    target_count = normalized.get("condition_target_count")
+    if not isinstance(target_count, int) or target_count <= 0:
+        return False
+
+    if condition_type == "card_issue_count":
+        card_id = normalized.get("condition_card_id")
+        if not isinstance(card_id, int) or card_id <= 0:
+            return False
+        issue_count = sum(
+            1
+            for issue in issues
+            if int(issue.get("student_id", 0)) == student.id and int(issue.get("card_id", 0)) == card_id
+        )
+        return issue_count >= target_count
+
+    if condition_type == "stat_threshold":
+        stat_key = normalized.get("condition_stat_key")
+        if not isinstance(stat_key, str):
+            return False
+        normalized_key = stat_key.strip().lower()
+        if normalized_key not in AUTO_TITLE_STAT_FIELDS:
+            return False
+        return int(getattr(student, normalized_key, 0)) >= target_count
+
+    return False
+
+
+def _issue_auto_titles_for_students(student_ids: list[int], db: Session) -> None:
+    unique_student_ids = sorted({student_id for student_id in student_ids if student_id > 0})
+    if not unique_student_ids:
+        return
+
+    students = {
+        student.id: student
+        for student in db.query(Student).filter(Student.id.in_(unique_student_ids)).all()
+    }
+    if not students:
+        return
+
+    definitions = _get_class_title_definitions(db)
+    issues = _get_card_issues(db)
+
+    for definition in definitions:
+        normalized_definition = _normalize_title_definition(definition)
+        if normalized_definition.get("achievement_mode") != "auto":
+            continue
+
+        eligible_student_ids = [
+            student_id
+            for student_id in unique_student_ids
+            if (student := students.get(student_id)) is not None
+            and _is_auto_title_eligible(
+                student=student,
+                title_definition=normalized_definition,
+                issues=issues,
+            )
+        ]
+        if not eligible_student_ids:
+            continue
+
+        _issue_title_to_students(
+            title_definition=normalized_definition,
+            student_ids=eligible_student_ids,
+            awarded_reason=f"자동 달성: {str(normalized_definition.get('condition_text', '')).strip()}",
+            awarded_by_user_id=None,
+            db=db,
+        )
 
 
 def _issue_title_to_students(
@@ -2347,6 +2517,23 @@ def list_class_titles(
             ),
             reward_exp=max(0, int(item.get("reward_exp", 40))),
             reward_won=max(0, int(item.get("reward_won", 80))),
+            achievement_mode=str(item.get("achievement_mode", "manual")),
+            auto_condition_type=str(item.get("auto_condition_type", "none")),
+            condition_card_id=(
+                int(item.get("condition_card_id"))
+                if isinstance(item.get("condition_card_id"), int)
+                else None
+            ),
+            condition_stat_key=(
+                str(item.get("condition_stat_key"))
+                if isinstance(item.get("condition_stat_key"), str)
+                else None
+            ),
+            condition_target_count=(
+                int(item.get("condition_target_count"))
+                if isinstance(item.get("condition_target_count"), int)
+                else None
+            ),
             is_active=item.get("is_active") is not False,
             recipient_count=recipient_count_map.get(int(item.get("id", 0)), 0),
             created_at=_parse_iso_datetime(item.get("created_at")),
@@ -2390,6 +2577,7 @@ def create_class_title(
         "created_at": now_iso,
         "updated_at": now_iso,
     }
+    created = _normalize_title_definition(created)
     definitions.append(created)
     _set_class_title_definitions(db, definitions)
     db.commit()
@@ -2423,6 +2611,23 @@ def create_class_title(
         ),
         reward_exp=max(0, int(created.get("reward_exp", 40))),
         reward_won=max(0, int(created.get("reward_won", 80))),
+        achievement_mode=str(created.get("achievement_mode", "manual")),
+        auto_condition_type=str(created.get("auto_condition_type", "none")),
+        condition_card_id=(
+            int(created.get("condition_card_id"))
+            if isinstance(created.get("condition_card_id"), int)
+            else None
+        ),
+        condition_stat_key=(
+            str(created.get("condition_stat_key"))
+            if isinstance(created.get("condition_stat_key"), str)
+            else None
+        ),
+        condition_target_count=(
+            int(created.get("condition_target_count"))
+            if isinstance(created.get("condition_target_count"), int)
+            else None
+        ),
         is_active=created.get("is_active") is not False,
         recipient_count=0,
         created_at=_parse_iso_datetime(created.get("created_at")),
@@ -2478,10 +2683,27 @@ def update_class_title(
         target["reward_exp"] = payload.reward_exp
     if payload.reward_won is not None:
         target["reward_won"] = payload.reward_won
+    if payload.achievement_mode is not None:
+        target["achievement_mode"] = payload.achievement_mode
+    if payload.auto_condition_type is not None:
+        target["auto_condition_type"] = payload.auto_condition_type
+    if payload.condition_card_id is not None:
+        target["condition_card_id"] = payload.condition_card_id
+    if payload.condition_stat_key is not None:
+        target["condition_stat_key"] = payload.condition_stat_key
+    if payload.condition_target_count is not None:
+        target["condition_target_count"] = payload.condition_target_count
     if payload.is_active is not None:
         target["is_active"] = payload.is_active
 
     target["updated_at"] = datetime.now(UTC).isoformat()
+    normalized_target = _normalize_title_definition(target)
+    for index, item in enumerate(definitions):
+        if int(item.get("id", -1)) == title_id:
+            definitions[index] = normalized_target
+            break
+    target = normalized_target
+
     _set_class_title_definitions(db, definitions)
     db.commit()
 
@@ -2510,6 +2732,23 @@ def update_class_title(
         ),
         reward_exp=max(0, int(target.get("reward_exp", 40))),
         reward_won=max(0, int(target.get("reward_won", 80))),
+        achievement_mode=str(target.get("achievement_mode", "manual")),
+        auto_condition_type=str(target.get("auto_condition_type", "none")),
+        condition_card_id=(
+            int(target.get("condition_card_id"))
+            if isinstance(target.get("condition_card_id"), int)
+            else None
+        ),
+        condition_stat_key=(
+            str(target.get("condition_stat_key"))
+            if isinstance(target.get("condition_stat_key"), str)
+            else None
+        ),
+        condition_target_count=(
+            int(target.get("condition_target_count"))
+            if isinstance(target.get("condition_target_count"), int)
+            else None
+        ),
         is_active=target.get("is_active") is not False,
         recipient_count=recipient_count,
         created_at=_parse_iso_datetime(target.get("created_at")),
@@ -2744,6 +2983,8 @@ def update_student_economy_as_admin(
 
     if payload.communication is not None:
         student.communication = payload.communication
+
+    _issue_auto_titles_for_students([student.id], db)
 
     db.commit()
     db.refresh(student)
