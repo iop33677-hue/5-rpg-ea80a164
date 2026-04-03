@@ -1,0 +1,202 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;800&family=Orbitron:wght@500;700;800&family=Rajdhani:wght@500;600;700&display=swap');
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.95rem;
+  --background: #edf3fb;
+  --foreground: #123457;
+  --card: #ffffff;
+  --card-foreground: #163a62;
+  --popover: #ffffff;
+  --popover-foreground: #163a62;
+  --primary: #285f95;
+  --primary-foreground: #f6fbff;
+  --secondary: #dfeaf8;
+  --secondary-foreground: #21456e;
+  --muted: #e8f0fb;
+  --muted-foreground: #5f7898;
+  --accent: #d5e4f7;
+  --accent-foreground: #22496f;
+  --destructive: #d96570;
+  --border: #c9d9ed;
+  --input: #bfd2e8;
+  --ring: #4e82b8;
+  --chart-1: #4e82b8;
+  --chart-2: #8faed2;
+  --chart-3: #c9d9ed;
+  --chart-4: #5f9ad1;
+  --chart-5: #7aaad8;
+  --sidebar: #102842;
+  --sidebar-foreground: #d5e7fb;
+  --sidebar-primary: #2f6ea8;
+  --sidebar-primary-foreground: #f4f9ff;
+  --sidebar-accent: #1b3f66;
+  --sidebar-accent-foreground: #e2efff;
+  --sidebar-border: #2f5074;
+  --sidebar-ring: #6fa8de;
+}
+
+.dark {
+  --background: #060d18;
+  --foreground: #d8e8fd;
+  --card: #0e2136;
+  --card-foreground: #dce9fb;
+  --popover: #0d1e31;
+  --popover-foreground: #dce9fb;
+  --primary: #3978af;
+  --primary-foreground: #f2f8ff;
+  --secondary: #173957;
+  --secondary-foreground: #dbe9fb;
+  --muted: #142c46;
+  --muted-foreground: #8ea9c7;
+  --accent: #173a5d;
+  --accent-foreground: #dbe9ff;
+  --destructive: #ef8084;
+  --border: #304f75;
+  --input: #3d6189;
+  --ring: #73b6ff;
+  --chart-1: #67b4ea;
+  --chart-2: #e2b066;
+  --chart-3: #95a8e0;
+  --chart-4: #67c2a6;
+  --chart-5: #d47d85;
+  --sidebar: #0d1f33;
+  --sidebar-foreground: #cee1f9;
+  --sidebar-primary: #3978af;
+  --sidebar-primary-foreground: #e9f3ff;
+  --sidebar-accent: #16385a;
+  --sidebar-accent-foreground: #dbe9ff;
+  --sidebar-border: #2b4a6e;
+  --sidebar-ring: #73b6ff;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    font-family: 'Noto Sans KR', system-ui, sans-serif;
+    letter-spacing: 0.01em;
+    @apply bg-background text-foreground antialiased;
+  }
+
+  .font-heading {
+    font-family: 'Orbitron', 'Rajdhani', 'Noto Sans KR', system-ui, sans-serif;
+  }
+}
+
+.joseon-grid {
+  background-image:
+    linear-gradient(rgba(91, 131, 179, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91, 131, 179, 0.12) 1px, transparent 1px);
+  background-size: 52px 52px;
+}
+
+.joseon-noise {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.09) 0.45px, transparent 0.45px);
+  background-size: 4px 4px;
+}
+
+.dot-pulse {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background-color: #93c5fd;
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+
+.dot-pulse:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dot-pulse:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.menu-item-motion {
+  will-change: transform, opacity, box-shadow;
+}
+
+.panel-card-hover {
+  will-change: transform, box-shadow;
+}
+
+.modal-enter {
+  animation: modalEnter 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
