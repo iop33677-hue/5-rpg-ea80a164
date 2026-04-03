@@ -586,6 +586,7 @@ function App() {
   const [uploadMessage, setUploadMessage] = useState('')
   const [activeMenu, setActiveMenu] = useState('학생 목록')
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+  const [isMobileTabDrawerOpen, setIsMobileTabDrawerOpen] = useState(false)
 
   const raidBossRate = useMemo(() => {
     if (!raid) {
@@ -758,6 +759,11 @@ function App() {
   const sidebarItems = isStudentSession
     ? sidebarMenuItems.filter((item) => item.label !== '학생 로그인')
     : sidebarMenuItems
+
+  const handleSidebarMenuSelect = (label: string): void => {
+    setActiveMenu(label)
+    setIsMobileTabDrawerOpen(false)
+  }
 
   const studentDetailExpRate = useMemo(() => {
     if (!studentDetail) {
@@ -2136,9 +2142,17 @@ function App() {
           <div className="flex items-center gap-3">
             <button
               type="button"
+              aria-label={isMobileTabDrawerOpen ? '탭 닫기' : '탭 열기'}
+              onClick={() => setIsMobileTabDrawerOpen((prev) => !prev)}
+              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#456592] bg-[#173256]/75 transition-colors duration-200 hover:bg-[#214877] lg:hidden"
+            >
+              {isMobileTabDrawerOpen ? <X className="size-4" /> : <PanelLeftOpen className="size-4" />}
+            </button>
+            <button
+              type="button"
               aria-label="뒤로가기"
               onClick={() => window.history.back()}
-              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#456592] bg-[#173256]/75 transition-colors duration-200 hover:bg-[#214877]"
+              className="hidden h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#456592] bg-[#173256]/75 transition-colors duration-200 hover:bg-[#214877] lg:flex"
             >
               <ArrowLeft className="size-4" />
             </button>
@@ -2186,6 +2200,7 @@ function App() {
                   await signOut()
                   setAuthUser(null)
                   setActiveMenu('학생 목록')
+                  setIsMobileTabDrawerOpen(false)
                 }}
               >
                 로그아웃
@@ -2206,7 +2221,72 @@ function App() {
       </header>
 
       {authUser ? (
-        <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
+        <>
+          <div
+            aria-hidden="true"
+            onClick={() => setIsMobileTabDrawerOpen(false)}
+            className={`fixed inset-0 z-40 bg-[#050b14]/60 transition-opacity duration-300 lg:hidden ${
+              isMobileTabDrawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+          />
+
+          <aside
+            className={`fixed inset-y-0 left-0 z-50 w-[280px] border-r border-[#2e4a6f] bg-[linear-gradient(180deg,rgba(10,22,37,0.98)_0%,rgba(12,26,43,0.98)_45%,rgba(8,18,31,1)_100%)] shadow-[0_24px_44px_rgba(1,8,18,0.72)] transition-transform duration-300 ease-out lg:hidden ${
+              isMobileTabDrawerOpen ? 'translate-x-0' : '-translate-x-full'
+            }`}
+            aria-label="탭 메뉴"
+          >
+            <div className="flex h-14 items-center justify-between border-b border-[#264666] px-4">
+              <p className="font-heading text-sm font-semibold tracking-[0.08em] text-[#e9f2ff]">탭 메뉴</p>
+              <button
+                type="button"
+                aria-label="탭 닫기"
+                onClick={() => setIsMobileTabDrawerOpen(false)}
+                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-[#48688f] bg-[#132a47] text-[#9ec2ec] transition-colors duration-200 hover:bg-[#1c3b61]"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <div className="border-b border-[#264666] px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-[#7f9ec2]">{isStudentSession ? '학생 모드' : '교사 모드'}</p>
+              <p className="mt-1 text-xs text-[#9bb4d0]">원하는 탭을 선택해 바로 이동하세요.</p>
+            </div>
+
+            <nav className="h-[calc(100%-111px)] overflow-y-auto px-3 py-3">
+              {(['학급 운영', '학습 확장', '상점 및 관리'] as const).map((sectionName) => (
+                <div key={sectionName} className="mb-3 border-b border-[#223f5f] pb-3 last:mb-0 last:border-none last:pb-0">
+                  <p className="px-1 pb-1 text-[10px] font-semibold tracking-[0.1em] text-[#6f8fb4]">{sectionName}</p>
+                  <div className="space-y-1">
+                    {sidebarItems
+                      .filter((item) => item.section === sectionName)
+                      .map((item) => {
+                        const Icon = item.icon
+                        const isActive = activeMenu === item.label
+
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            onClick={() => handleSidebarMenuSelect(item.label)}
+                            className={`menu-item-motion flex h-11 w-full cursor-pointer items-center gap-2 rounded-md px-3 text-left transition-all duration-[220ms] ${
+                              isActive
+                                ? 'bg-[linear-gradient(90deg,#255189_0%,#2f6ea8_100%)] text-[#eff7ff] shadow-[0_8px_24px_rgba(10,42,80,0.35)]'
+                                : 'text-[#aac2dd] hover:bg-[#163558] hover:text-[#e8f2ff]'
+                            }`}
+                          >
+                            <Icon className="size-4" />
+                            <span className="text-sm font-medium">{item.label}</span>
+                          </button>
+                        )
+                      })}
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </aside>
+
+          <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
           <div className="flex gap-4 lg:gap-6">
             <aside
               className={`relative hidden shrink-0 border border-[#2e4a6f] bg-[linear-gradient(180deg,rgba(10,22,37,0.94)_0%,rgba(12,26,43,0.96)_45%,rgba(8,18,31,0.98)_100%)] shadow-[0_18px_45px_rgba(1,8,18,0.5)] lg:block ${
@@ -2254,7 +2334,7 @@ function App() {
                               key={item.label}
                               type="button"
                               title={item.label}
-                              onClick={() => setActiveMenu(item.label)}
+                              onClick={() => handleSidebarMenuSelect(item.label)}
                               className={`menu-item-motion flex h-8 w-full cursor-pointer items-center transition-all duration-[220ms] ${
                                 isSidebarCollapsed ? 'justify-center rounded-md' : 'justify-start gap-1.5 rounded-md px-2'
                               } ${
@@ -4133,6 +4213,7 @@ function App() {
             </div>
           ) : null}
         </main>
+        </>
       ) : (
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
           <section className="overflow-hidden rounded-3xl border border-[#2f4f77] bg-[linear-gradient(120deg,rgba(12,25,42,0.96),rgba(17,32,51,0.95))] shadow-[0_24px_60px_rgba(2,10,24,0.45)]">
