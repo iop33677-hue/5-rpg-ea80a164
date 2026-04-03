@@ -214,6 +214,11 @@ interface TeamBucket {
   students: Student[]
 }
 
+interface StopwatchLap {
+  id: number
+  timestamp: number
+}
+
 type PickerPopupMode = 'single' | 'multi' | 'team'
 
 interface PickerPopupState {
@@ -555,6 +560,8 @@ function formatStopwatch(centiseconds: number): string {
   return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
+const classToolTimerPresets = [3, 5, 10, 20] as const
+
 function App() {
   const [authUser, setAuthUser] = useState<User | null>(getCurrentUser())
   const [email, setEmail] = useState('iop3367@naver.com')
@@ -671,6 +678,7 @@ function App() {
   const [teamBuckets, setTeamBuckets] = useState<TeamBucket[]>([])
   const [lastTeamCount, setLastTeamCount] = useState<number | null>(null)
   const drawSoundContextRef = useRef<AudioContext | null>(null)
+  const rouletteSpinTimeoutRef = useRef<number | null>(null)
 
   const [timerMode, setTimerMode] = useState<TimerMode>('clock')
   const [clockNow, setClockNow] = useState<Date>(() => new Date())
@@ -681,10 +689,12 @@ function App() {
 
   const [isStopwatchRunning, setIsStopwatchRunning] = useState(false)
   const [stopwatchCentiseconds, setStopwatchCentiseconds] = useState(0)
+  const [stopwatchLaps, setStopwatchLaps] = useState<StopwatchLap[]>([])
+  const [nextStopwatchLapId, setNextStopwatchLapId] = useState(1)
 
-  const [rouletteRotation, setRouletteRotation] = useState(0)
   const [isRouletteSpinning, setIsRouletteSpinning] = useState(false)
   const [rouletteWinner, setRouletteWinner] = useState<Student | null>(null)
+  const [rouletteCurrentStudent, setRouletteCurrentStudent] = useState<Student | null>(null)
 
   const raidBossRate = useMemo(() => {
     if (!raid) {
@@ -1137,6 +1147,11 @@ function App() {
         window.clearTimeout(timeoutId)
       }
       celebrationTimeoutRef.current = []
+
+      if (rouletteSpinTimeoutRef.current !== null) {
+        window.clearTimeout(rouletteSpinTimeoutRef.current)
+        rouletteSpinTimeoutRef.current = null
+      }
     }
   }, [])
 
@@ -2469,15 +2484,45 @@ function App() {
     setClassToolMessage(`${teamCount}개 팀으로 랜덤 배정했습니다.`)
   }
 
-  const applyTimerPreset = () => {
-    const minutes = Number(timerMinuteInput)
-    const seconds = Number(timerSecondInput)
-    const safeMinutes = Number.isFinite(minutes) ? Math.max(0, Math.min(180, Math.floor(minutes))) : 0
-    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.min(59, Math.floor(seconds))) : 0
+  const applyTimerPreset = (presetMinutes?: number, presetSeconds = 0) => {
+    const sourceMinutes = presetMinutes ?? Number(timerMinuteInput)
+    const sourceSeconds = presetMinutes !== undefined ? presetSeconds : Number(timerSecondInput)
 
-    const total = safeMinutes * 60 + safeSeconds
-    setRemainingSeconds(total)
+    const safeMinutes = Number.isFinite(sourceMinutes)
+      ? Math.max(0, Math.min(180, Math.floor(sourceMinutes)))
+      : 0
+    const safeSeconds = Number.isFinite(sourceSeconds)
+      ? Math.max(0, Math.min(59, Math.floor(sourceSeconds)))
+      : 0
+
+    setTimerMinuteInput(String(safeMinutes))
+    setTimerSecondInput(String(safeSeconds))
+    setRemainingSeconds(safeMinutes * 60 + safeSeconds)
     setIsTimerRunning(false)
+  }
+
+  const handleRecordStopwatchLap = () => {
+    if (stopwatchCentiseconds <= 0) {
+      return
+    }
+
+    setNextStopwatchLapId((prevId) => {
+      setStopwatchLaps((prevLaps) => [
+        {
+          id: prevId,
+          timestamp: stopwatchCentiseconds,
+        },
+        ...prevLaps,
+      ])
+      return prevId + 1
+    })
+  }
+
+  const handleResetStopwatch = () => {
+    setIsStopwatchRunning(false)
+    setStopwatchCentiseconds(0)
+    setStopwatchLaps([])
+    setNextStopwatchLapId(1)
   }
 
   const handleSpinRoulette = () => {
@@ -2485,22 +2530,42 @@ function App() {
       return
     }
 
-    const winnerIndex = Math.floor(Math.random() * classToolStudents.length)
-    const winner = classToolStudents[winnerIndex]
-    const segmentAngle = 360 / classToolStudents.length
-    const winnerAngle = winnerIndex * segmentAngle + segmentAngle / 2
-    const targetOffset = ((270 - winnerAngle) % 360 + 360) % 360
-    const nextRotation = rouletteRotation + 2160 + targetOffset
+    if (rouletteSpinTimeoutRef.current !== null) {
+      window.clearTimeout(rouletteSpinTimeoutRef.current)
+      rouletteSpinTimeoutRef.current = null
+    }
+
+    const marbleOrder = shuffleStudents(classToolStudents)
+    const winner = marbleOrder[Math.floor(Math.random() * marbleOrder.length)]
+    const totalTicks = 26 + Math.floor(Math.random() * 10)
+
+    let tickCount = 0
+    let candidateIndex = 0
 
     setIsRouletteSpinning(true)
     setRouletteWinner(null)
-    setRouletteRotation(nextRotation)
+    setRouletteCurrentStudent(marbleOrder[0] ?? null)
 
-    window.setTimeout(() => {
-      setRouletteWinner(winner)
-      setClassToolMessage(`돌림판 결과: ${winner.student_number}번 ${winner.name}`)
-      setIsRouletteSpinning(false)
-    }, 4200)
+    const runTick = () => {
+      tickCount += 1
+      candidateIndex = (candidateIndex + 1 + Math.floor(Math.random() * 2)) % marbleOrder.length
+      setRouletteCurrentStudent(marbleOrder[candidateIndex])
+
+      if (tickCount >= totalTicks) {
+        setRouletteCurrentStudent(winner)
+        setRouletteWinner(winner)
+        setClassToolMessage(`마블 룰렛 결과: ${winner.student_number}번 ${winner.name}`)
+        setIsRouletteSpinning(false)
+        rouletteSpinTimeoutRef.current = null
+        return
+      }
+
+      const progress = tickCount / totalTicks
+      const nextDelay = 55 + Math.floor(progress * 210)
+      rouletteSpinTimeoutRef.current = window.setTimeout(runTick, nextDelay)
+    }
+
+    rouletteSpinTimeoutRef.current = window.setTimeout(runTick, 70)
   }
 
   return (
@@ -3951,7 +4016,7 @@ function App() {
                         {timerMode === 'timer' ? (
                           <>
                             <p className="font-heading text-5xl font-semibold tracking-[0.06em] sm:text-7xl">{formatSecondsToClock(remainingSeconds)}</p>
-                            <div className="mx-auto mt-4 grid max-w-sm grid-cols-2 gap-2">
+                            <div className="mx-auto mt-4 grid w-full max-w-sm grid-cols-2 gap-2">
                               <input
                                 type="number"
                                 min={0}
@@ -3971,8 +4036,20 @@ function App() {
                                 placeholder="초"
                               />
                             </div>
+                            <div className="mx-auto mt-3 grid w-full max-w-sm grid-cols-2 gap-2 sm:grid-cols-4">
+                              {classToolTimerPresets.map((minutes) => (
+                                <button
+                                  key={minutes}
+                                  type="button"
+                                  onClick={() => applyTimerPreset(minutes, 0)}
+                                  className="h-10 cursor-pointer rounded-lg border border-[#9cb9dd] bg-white/20 px-2 text-sm font-semibold text-white transition-colors duration-200 hover:bg-white/30"
+                                >
+                                  {minutes}분
+                                </button>
+                              ))}
+                            </div>
                             <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                              <button type="button" onClick={applyTimerPreset} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                              <button type="button" onClick={() => applyTimerPreset()} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
                                 <Check className="size-4" /> 설정
                               </button>
                               <button type="button" onClick={() => setIsTimerRunning((prev) => !prev)} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
@@ -3994,9 +4071,27 @@ function App() {
                                 {isStopwatchRunning ? <Pause className="size-4" /> : <Play className="size-4" />}
                                 {isStopwatchRunning ? '정지' : '시작'}
                               </button>
-                              <button type="button" onClick={() => { setIsStopwatchRunning(false); setStopwatchCentiseconds(0) }} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                              <button type="button" onClick={handleRecordStopwatchLap} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-emerald-200/60 bg-emerald-500/25 px-3 text-sm font-semibold text-emerald-50 hover:bg-emerald-500/35">
+                                <History className="size-4" /> 기록
+                              </button>
+                              <button type="button" onClick={handleResetStopwatch} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
                                 <RotateCcw className="size-4" /> 초기화
                               </button>
+                            </div>
+                            <div className="mx-auto mt-4 w-full max-w-md rounded-xl border border-white/25 bg-white/10 p-3 text-left">
+                              <p className="text-sm font-semibold text-[#d5e7ff]">기록 로그</p>
+                              {stopwatchLaps.length > 0 ? (
+                                <div className="mt-2 max-h-44 space-y-1 overflow-y-auto text-sm text-[#d5e7ff]">
+                                  {stopwatchLaps.map((lap, index) => (
+                                    <div key={lap.id} className="flex items-center justify-between rounded-lg bg-[#0a1730]/35 px-2.5 py-1.5">
+                                      <span>기록 {stopwatchLaps.length - index}</span>
+                                      <span className="font-semibold">{formatStopwatch(lap.timestamp)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="mt-1 text-sm text-[#b7c9e6]">아직 기록이 없습니다. 기록 버튼으로 시간을 누적해보세요.</p>
+                              )}
                             </div>
                           </>
                         ) : null}
@@ -4007,34 +4102,61 @@ function App() {
                   {classToolTab === 'roulette' ? (
                     <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4 sm:p-5">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm text-[#4a678a]">우리반 1번~25번 학생 명단으로 돌아가는 클래스 룰렛입니다.</p>
+                        <p className="text-sm text-[#4a678a]">마블룰렛처럼 후보가 빠르게 순환하다 감속 후 최종 학생이 고정됩니다.</p>
                         <button
                           type="button"
                           onClick={handleSpinRoulette}
                           disabled={isRouletteSpinning || classToolStudents.length === 0}
                           className="flex h-11 cursor-pointer items-center gap-2 rounded-lg bg-[linear-gradient(90deg,#7c3aed_0%,#2563eb_100%)] px-4 text-sm font-semibold text-white transition-all duration-200 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          <Target className="size-4" /> {isRouletteSpinning ? '돌리는 중...' : '룰렛 시작'}
+                          <Target className="size-4" /> {isRouletteSpinning ? '마블 굴리는 중...' : '마블룰렛 시작'}
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
-                        <div className="mx-auto w-full max-w-[420px]">
-                          <div className="relative mx-auto flex h-[320px] w-[320px] items-center justify-center rounded-full border-[10px] border-[#cfe0f4] bg-[#f8fbff] shadow-inner sm:h-[380px] sm:w-[380px]">
-                            <div className="absolute -top-4 z-20 h-0 w-0 border-l-[16px] border-r-[16px] border-t-0 border-b-[22px] border-l-transparent border-r-transparent border-b-[#ef4444]" />
-                            <div
-                              className="h-[280px] w-[280px] rounded-full border border-[#bcd1ea] sm:h-[336px] sm:w-[336px]"
-                              style={{
-                                backgroundImage: `conic-gradient(${classToolStudents
-                                  .map((_, index) => `${index % 2 === 0 ? '#dbeafe' : '#f3e8ff'} ${(index / Math.max(classToolStudents.length, 1)) * 100}% ${((index + 1) / Math.max(classToolStudents.length, 1)) * 100}%`)
-                                  .join(', ')})`,
-                                transform: `rotate(${rouletteRotation}deg)`,
-                                transition: isRouletteSpinning ? 'transform 4.2s cubic-bezier(0.2, 0.9, 0.2, 1)' : 'none',
-                              }}
-                            />
-                            <div className="absolute flex h-20 w-20 items-center justify-center rounded-full border border-[#c8d7ea] bg-white text-[#1f3e63]">
-                              <Dices className="size-8" />
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+                        <div className="space-y-3">
+                          <div className="overflow-hidden rounded-2xl border border-[#cddcf0] bg-[linear-gradient(180deg,#eef4ff_0%,#f7faff_100%)] p-3">
+                            <div className="mb-2 flex items-center justify-between">
+                              <p className="text-sm font-semibold text-[#1e3a8a]">마블 트랙</p>
+                              <p className="text-xs text-[#5f7897]">총 {classToolStudents.length}명</p>
                             </div>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+                              {classToolStudents.map((student) => {
+                                const isActive = rouletteCurrentStudent?.id === student.id
+                                const isWinner = rouletteWinner?.id === student.id
+                                return (
+                                  <div
+                                    key={student.id}
+                                    className={`rounded-lg border px-2 py-2 text-center text-xs transition-all duration-150 ${
+                                      isWinner
+                                        ? 'border-[#8b5cf6] bg-[#f3e8ff] text-[#6d28d9] shadow-[0_0_0_1px_rgba(139,92,246,0.35)]'
+                                        : isActive
+                                          ? 'border-[#3b82f6] bg-[#dbeafe] text-[#1e40af] shadow-[0_0_0_1px_rgba(59,130,246,0.3)]'
+                                          : 'border-[#d9e5f4] bg-white text-[#486685]'
+                                    }`}
+                                  >
+                                    <p className="font-semibold">{student.student_number}번</p>
+                                    <p className="truncate">{student.name}</p>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-[#dbe6f3] bg-[#f8fbff] p-4 text-center">
+                            <p className="text-xs uppercase tracking-[0.12em] text-[#6c84a0]">현재 포커스</p>
+                            <p className="mt-2 font-heading text-3xl font-semibold text-[#153a63] sm:text-4xl">
+                              {rouletteCurrentStudent
+                                ? `${rouletteCurrentStudent.student_number}번 ${rouletteCurrentStudent.name}`
+                                : '대기 중'}
+                            </p>
+                            <p className="mt-2 text-sm text-[#5a7696]">
+                              {isRouletteSpinning
+                                ? '속도를 줄이며 최종 학생을 선택하고 있어요...'
+                                : rouletteWinner
+                                  ? '최종 선택이 완료되었습니다.'
+                                  : '시작 버튼을 눌러 진행하세요.'}
+                            </p>
                           </div>
                         </div>
 
@@ -5092,14 +5214,22 @@ function App() {
       )}
 
       {pickerPopup && authUser ? (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-[#d7c7ff] bg-white p-6 shadow-[0_24px_50px_rgba(20,12,52,0.32)]">
-            <p className="text-center text-3xl font-semibold text-[#7c3aed]">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4 backdrop-blur-[2px]">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+            <div className="absolute left-1/2 top-1/2 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(167,139,250,0.3),rgba(59,130,246,0.08),transparent_68%)] blur-2xl" />
+            <div className="absolute left-1/2 top-1/2 h-[320px] w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-300/35" />
+          </div>
+          <div className="modal-enter relative w-full max-w-2xl overflow-hidden rounded-3xl border border-[#d7c7ff] bg-white p-6 shadow-[0_24px_50px_rgba(20,12,52,0.32)]">
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+              <div className="absolute -left-20 top-0 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(129,140,248,0.25),transparent_70%)] blur-2xl" />
+              <div className="absolute -bottom-24 right-0 h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(52,211,153,0.2),transparent_70%)] blur-2xl" />
+            </div>
+            <p className="relative text-center text-3xl font-semibold text-[#7c3aed]">
               {pickerPopup.mode === 'single' ? '학생 선택 완료' : pickerPopup.mode === 'multi' ? '다중 뽑기 결과' : '팀 편성 결과'}
             </p>
 
             {pickerPopup.mode === 'single' && latestSingleDraw ? (
-              <div className="mt-6 flex flex-col items-center">
+              <div className="modal-enter mt-6 flex flex-col items-center">
                 <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-[#e5d7ff] bg-[#f6f2ff]">
                   {latestSingleDraw.student.avatar_url ? (
                     <img src={latestSingleDraw.student.avatar_url} alt={`${latestSingleDraw.student.name} 아바타`} className="h-full w-full object-cover" />
@@ -5116,7 +5246,7 @@ function App() {
             ) : null}
 
             {pickerPopup.mode === 'multi' ? (
-              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="modal-enter mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {pickerPopup.drawnStudents.map((result) => (
                   <div key={`${result.student.id}-${result.drawOrder}`} className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] px-3 py-2">
                     <p className="text-xs text-[#56779c]">{result.drawOrder}번째</p>
@@ -5127,7 +5257,7 @@ function App() {
             ) : null}
 
             {pickerPopup.mode === 'team' ? (
-              <div className="mt-5 rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
+              <div className="modal-enter mt-5 rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
                 <p className="mb-2 text-sm font-semibold text-[#264b76]">{pickerPopup.teamCount}팀 편성 결과</p>
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                   {pickerPopup.teamBuckets.map((bucket) => (
