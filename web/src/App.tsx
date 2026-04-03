@@ -11,6 +11,7 @@ import {
   Check,
   ChevronRight,
   ClipboardCheck,
+  Clock3,
   Coins,
   Compass,
   Crown,
@@ -33,9 +34,12 @@ import {
   NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
+  Pause,
   Pencil,
+  Play,
   Rocket,
   ScrollText,
+  RotateCcw,
   Search,
   Settings2,
   Shield,
@@ -52,6 +56,7 @@ import {
   Trash2,
   Upload,
   UserRound,
+  Dices,
   Users,
   WandSparkles,
   Wrench,
@@ -194,6 +199,19 @@ interface CardFormState {
   level_delta: string
   selected_stat_keys: string[]
   stat_delta: string
+}
+
+type ClassToolTab = 'picker' | 'timer' | 'roulette'
+type TimerMode = 'clock' | 'timer' | 'stopwatch'
+
+interface DrawResult {
+  student: Student
+  drawOrder: number
+}
+
+interface TeamBucket {
+  teamNumber: number
+  students: Student[]
 }
 
 const titleIconPresets: TitleIconPreset[] = [
@@ -493,6 +511,41 @@ function parseXlsxRows(data: ArrayBuffer): ParsedQuestionRow[] {
   })
 }
 
+function shuffleStudents<T>(items: T[]): T[] {
+  const cloned = [...items]
+  for (let index = cloned.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1))
+    const temp = cloned[index]
+    cloned[index] = cloned[randomIndex]
+    cloned[randomIndex] = temp
+  }
+  return cloned
+}
+
+function formatClockTime(date: Date): string {
+  return date.toLocaleTimeString('ko-KR', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function formatSecondsToClock(totalSeconds: number): string {
+  const safeSeconds = Math.max(0, totalSeconds)
+  const minute = Math.floor(safeSeconds / 60)
+  const second = safeSeconds % 60
+  return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+}
+
+function formatStopwatch(centiseconds: number): string {
+  const safeValue = Math.max(0, centiseconds)
+  const minute = Math.floor(safeValue / 6000)
+  const second = Math.floor((safeValue % 6000) / 100)
+  const cs = safeValue % 100
+  return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
 function App() {
   const [authUser, setAuthUser] = useState<User | null>(getCurrentUser())
   const [email, setEmail] = useState('iop3367@naver.com')
@@ -601,6 +654,27 @@ function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isMobileTabDrawerOpen, setIsMobileTabDrawerOpen] = useState(false)
 
+  const [classToolTab, setClassToolTab] = useState<ClassToolTab>('picker')
+  const [pickedStudentIds, setPickedStudentIds] = useState<number[]>([])
+  const [currentDrawResult, setCurrentDrawResult] = useState<DrawResult | null>(null)
+  const [classToolMessage, setClassToolMessage] = useState('')
+  const [teamBuckets, setTeamBuckets] = useState<TeamBucket[]>([])
+  const [lastTeamCount, setLastTeamCount] = useState<number | null>(null)
+
+  const [timerMode, setTimerMode] = useState<TimerMode>('clock')
+  const [clockNow, setClockNow] = useState<Date>(() => new Date())
+  const [timerMinuteInput, setTimerMinuteInput] = useState('5')
+  const [timerSecondInput, setTimerSecondInput] = useState('0')
+  const [remainingSeconds, setRemainingSeconds] = useState(300)
+  const [isTimerRunning, setIsTimerRunning] = useState(false)
+
+  const [isStopwatchRunning, setIsStopwatchRunning] = useState(false)
+  const [stopwatchCentiseconds, setStopwatchCentiseconds] = useState(0)
+
+  const [rouletteRotation, setRouletteRotation] = useState(0)
+  const [isRouletteSpinning, setIsRouletteSpinning] = useState(false)
+  const [rouletteWinner, setRouletteWinner] = useState<Student | null>(null)
+
   const raidBossRate = useMemo(() => {
     if (!raid) {
       return 0
@@ -622,6 +696,28 @@ function App() {
     }
     return slots
   }, [students])
+
+  const classToolStudents = useMemo(
+    () => [...students].sort((a, b) => a.student_number - b.student_number),
+    [students],
+  )
+
+  const remainingDrawStudents = useMemo(
+    () => classToolStudents.filter((student) => !pickedStudentIds.includes(student.id)),
+    [classToolStudents, pickedStudentIds],
+  )
+
+  const pickerProgressPercent = useMemo(() => {
+    if (classToolStudents.length === 0) {
+      return 0
+    }
+    return Math.min(100, Math.round((pickedStudentIds.length / classToolStudents.length) * 100))
+  }, [classToolStudents.length, pickedStudentIds.length])
+
+  const miniPraiseCard = useMemo(
+    () => cards.find((card) => card.card_type === 'praise' && card.is_active) ?? null,
+    [cards],
+  )
 
   const filteredIssueStudents = useMemo(() => {
     const keyword = issueSearchKeyword.trim().toLowerCase()
@@ -1030,6 +1126,51 @@ function App() {
       celebrationTimeoutRef.current = []
     }
   }, [])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setClockNow(new Date())
+    }, 1000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTimerRunning) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          window.clearInterval(intervalId)
+          setIsTimerRunning(false)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [isTimerRunning])
+
+  useEffect(() => {
+    if (!isStopwatchRunning) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setStopwatchCentiseconds((prev) => prev + 1)
+    }, 10)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [isStopwatchRunning])
 
   const loadStudentDetail = async (studentId: number) => {
     setStudentDetailLoading(true)
@@ -2195,6 +2336,112 @@ function App() {
     await refreshTeacherData()
   }
 
+  const handleDrawStudents = (drawCount: number) => {
+    if (remainingDrawStudents.length === 0) {
+      setClassToolMessage('모든 학생을 이미 뽑았습니다. 초기화를 눌러 다시 시작하세요.')
+      return
+    }
+
+    const count = Math.max(1, Math.min(drawCount, remainingDrawStudents.length))
+    const selected = shuffleStudents(remainingDrawStudents).slice(0, count)
+
+    setPickedStudentIds((prev) => [...prev, ...selected.map((student) => student.id)])
+
+    if (count === 1) {
+      setCurrentDrawResult({
+        student: selected[0],
+        drawOrder: pickedStudentIds.length + 1,
+      })
+      setClassToolMessage('학생 한 명을 랜덤으로 뽑았습니다.')
+      return
+    }
+
+    setCurrentDrawResult(null)
+    setClassToolMessage(`${count}명을 뽑았습니다: ${selected.map((student) => student.name).join(', ')}`)
+  }
+
+  const handleResetDraw = () => {
+    setPickedStudentIds([])
+    setCurrentDrawResult(null)
+    setClassToolMessage('뽑기 기록을 초기화했습니다.')
+  }
+
+  const handleGiveMiniPraise = async () => {
+    if (!currentDrawResult) {
+      return
+    }
+
+    if (!canManageClassContent || !miniPraiseCard) {
+      setClassToolMessage('👏 잘했어요! (칭찬카드가 준비되면 자동 보상 연결이 가능합니다.)')
+      return
+    }
+
+    try {
+      await api.post<ClassroomCardIssueResult>(`/classroom/cards/${miniPraiseCard.id}/issue`, {
+        student_ids: [currentDrawResult.student.id],
+        issued_note: '클래스툴 랜덤 뽑기 미니 칭찬 보상',
+      })
+      setClassToolMessage(`${currentDrawResult.student.name} 학생에게 "잘했어요" 미니 칭찬카드를 지급했습니다.`)
+      await refreshTeacherData()
+    } catch {
+      setClassToolMessage('잘했어요 보상 지급에 실패했습니다. 잠시 후 다시 시도해주세요.')
+    }
+  }
+
+  const handleSplitTeams = (teamCount: number) => {
+    if (classToolStudents.length === 0) {
+      setClassToolMessage('팀을 나눌 학생이 없습니다.')
+      return
+    }
+
+    const buckets: TeamBucket[] = Array.from({ length: teamCount }, (_, index) => ({
+      teamNumber: index + 1,
+      students: [],
+    }))
+
+    shuffleStudents(classToolStudents).forEach((student, index) => {
+      buckets[index % teamCount].students.push(student)
+    })
+
+    setTeamBuckets(buckets)
+    setLastTeamCount(teamCount)
+    setClassToolMessage(`${teamCount}개 팀으로 랜덤 배정했습니다.`)
+  }
+
+  const applyTimerPreset = () => {
+    const minutes = Number(timerMinuteInput)
+    const seconds = Number(timerSecondInput)
+    const safeMinutes = Number.isFinite(minutes) ? Math.max(0, Math.min(180, Math.floor(minutes))) : 0
+    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, Math.min(59, Math.floor(seconds))) : 0
+
+    const total = safeMinutes * 60 + safeSeconds
+    setRemainingSeconds(total)
+    setIsTimerRunning(false)
+  }
+
+  const handleSpinRoulette = () => {
+    if (isRouletteSpinning || classToolStudents.length === 0) {
+      return
+    }
+
+    const winnerIndex = Math.floor(Math.random() * classToolStudents.length)
+    const winner = classToolStudents[winnerIndex]
+    const segmentAngle = 360 / classToolStudents.length
+    const winnerAngle = winnerIndex * segmentAngle + segmentAngle / 2
+    const targetOffset = ((270 - winnerAngle) % 360 + 360) % 360
+    const nextRotation = rouletteRotation + 2160 + targetOffset
+
+    setIsRouletteSpinning(true)
+    setRouletteWinner(null)
+    setRouletteRotation(nextRotation)
+
+    window.setTimeout(() => {
+      setRouletteWinner(winner)
+      setClassToolMessage(`돌림판 결과: ${winner.student_number}번 ${winner.name}`)
+      setIsRouletteSpinning(false)
+    }, 4200)
+  }
+
   return (
     <div className="relative min-h-screen overflow-x-clip bg-background text-foreground">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10">
@@ -2429,9 +2676,11 @@ function App() {
                     ? '학생의 칭호/이름 편집, 스탯·재화, 활동기록, 아바타, 사진 관리를 한 화면에서 제공합니다.'
                     : activeMenu === '학생 목록'
                       ? '학생 카드 클릭 시 상세정보 전용 화면으로 이동합니다.'
-                      : activeMenu === '던전 탐험'
-                        ? '보스 관련 운영은 던전 탐험 메뉴에서 관리합니다.'
-                        : '선택한 메뉴에 맞춰 필요한 운영 도구를 제공합니다.'}
+                      : activeMenu === '클래스 툴'
+                        ? '랜덤 뽑기, 타이머, 돌림판을 교실 활동 흐름에 맞춰 빠르게 사용할 수 있습니다.'
+                        : activeMenu === '던전 탐험'
+                          ? '보스 관련 운영은 던전 탐험 메뉴에서 관리합니다.'
+                          : '선택한 메뉴에 맞춰 필요한 운영 도구를 제공합니다.'}
                 </p>
               </div>
 
@@ -3484,7 +3733,283 @@ function App() {
                 </div>
               ) : null}
 
-              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인'].includes(activeMenu) ? (
+              {activeMenu === '클래스 툴' ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-heading text-2xl font-semibold text-slate-900">클래스 툴</h3>
+                        <p className="text-sm text-slate-600">교실 운영용 랜덤 뽑기 · 타이머 · 돌림판을 한 곳에서 사용하세요.</p>
+                      </div>
+                      <div className="rounded-xl border border-[#c9d9ef] bg-white px-3 py-2 text-sm font-semibold text-[#1e3a8a]">
+                        총 학생 수 {classToolStudents.length}명
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      {[
+                        { key: 'picker', label: '뽑기', description: '랜덤 선택 도구', icon: Dices },
+                        { key: 'timer', label: '타이머', description: '시간 관리 도구', icon: Clock3 },
+                        { key: 'roulette', label: '돌림판', description: '룰렛 도구', icon: Target },
+                      ].map((tool) => {
+                        const ToolIcon = tool.icon
+                        const isActive = classToolTab === tool.key
+                        return (
+                          <button
+                            key={tool.key}
+                            type="button"
+                            onClick={() => setClassToolTab(tool.key as ClassToolTab)}
+                            className={`h-16 cursor-pointer rounded-xl border px-3 text-left transition-colors duration-200 ${
+                              isActive
+                                ? 'border-[#8f5dff] bg-[#f4ecff] text-[#6d28d9]'
+                                : 'border-[#d9e5f4] bg-white text-[#415b7a] hover:bg-[#f6f9ff]'
+                            }`}
+                          >
+                            <p className="flex items-center gap-2 text-sm font-semibold"><ToolIcon className="size-4" /> {tool.label}</p>
+                            <p className="mt-0.5 text-xs">{tool.description}</p>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {classToolMessage ? (
+                    <div className="rounded-xl border border-[#c9d9ef] bg-white px-4 py-3 text-sm text-[#234f81]">{classToolMessage}</div>
+                  ) : null}
+
+                  {classToolTab === 'picker' ? (
+                    <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4 sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-[#1e3a8a]">뽑힌 학생: {pickedStudentIds.length} / {classToolStudents.length}명</p>
+                        <button
+                          type="button"
+                          onClick={handleResetDraw}
+                          className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-[#d4e1f1] bg-[#f8fbff] px-3 text-sm text-[#35597f] hover:bg-[#eef5ff]"
+                        >
+                          <RotateCcw className="size-4" /> 초기화
+                        </button>
+                      </div>
+
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-[#e6eef9]">
+                        <div className="h-full bg-[linear-gradient(90deg,#9057ff_0%,#3b82f6_100%)] transition-all duration-300" style={{ width: `${pickerProgressPercent}%` }} />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                        {classToolStudents.map((student) => {
+                          const isPicked = pickedStudentIds.includes(student.id)
+                          return (
+                            <div
+                              key={student.id}
+                              className={`rounded-xl border px-3 py-2 transition-colors duration-200 ${
+                                isPicked ? 'border-[#d9d3f5] bg-[#f6f2ff]' : 'border-[#dce8f6] bg-[#f8fbff]'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="rounded-md bg-[#ef4444] px-1.5 py-0.5 text-[11px] font-semibold text-white">{student.student_number}</span>
+                                <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#c7d8ee] bg-white">
+                                  {student.avatar_url ? (
+                                    <img src={student.avatar_url} alt={`${student.name} 아바타`} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <span className="text-xs font-bold text-[#56779c]">{student.name.slice(0, 2)}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="mt-2 line-clamp-2 break-words text-sm font-semibold text-[#1c3f67]">{student.name}</p>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+                        {[1, 2, 3, 4, 5, 6].map((count) => (
+                          <button
+                            key={count}
+                            type="button"
+                            onClick={() => handleDrawStudents(count)}
+                            disabled={remainingDrawStudents.length === 0}
+                            className="h-11 cursor-pointer rounded-lg border border-[#b8dfcf] bg-[#e9fff4] text-sm font-semibold text-[#0f766e] transition-colors duration-200 hover:bg-[#dcfce7] disabled:cursor-not-allowed disabled:opacity-55"
+                          >
+                            {count}명 뽑기
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 lg:grid-cols-5">
+                        {[2, 3, 4, 5, 6].map((teamCount) => (
+                          <button
+                            key={teamCount}
+                            type="button"
+                            onClick={() => handleSplitTeams(teamCount)}
+                            className="h-11 cursor-pointer rounded-lg border border-[#f4d2ab] bg-[#fff5e8] text-sm font-semibold text-[#c2410c] transition-colors duration-200 hover:bg-[#ffedd5]"
+                          >
+                            {teamCount}팀 나누기
+                          </button>
+                        ))}
+                      </div>
+
+                      {teamBuckets.length > 0 ? (
+                        <div className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
+                          <p className="mb-2 text-sm font-semibold text-[#264b76]">팀 편성 결과 {lastTeamCount ? `(${lastTeamCount}팀)` : ''}</p>
+                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                            {teamBuckets.map((bucket) => (
+                              <div key={bucket.teamNumber} className="rounded-lg border border-[#d5e3f3] bg-white p-2">
+                                <p className="text-sm font-semibold text-[#1e3a8a]">{bucket.teamNumber}팀</p>
+                                <p className="mt-1 text-xs text-[#56779c]">{bucket.students.map((student) => `${student.student_number}번 ${student.name}`).join(', ') || '배정 없음'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {classToolTab === 'timer' ? (
+                    <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4 sm:p-5">
+                      <div className="inline-flex rounded-xl border border-[#d7e4f2] bg-[#f4f8ff] p-1">
+                        {[
+                          { key: 'clock', label: '시계' },
+                          { key: 'timer', label: '타이머' },
+                          { key: 'stopwatch', label: '스톱워치' },
+                        ].map((mode) => (
+                          <button
+                            key={mode.key}
+                            type="button"
+                            onClick={() => setTimerMode(mode.key as TimerMode)}
+                            className={`h-10 cursor-pointer rounded-lg px-4 text-sm font-semibold transition-colors duration-200 ${
+                              timerMode === mode.key
+                                ? 'bg-white text-[#2563eb] shadow'
+                                : 'text-[#5b728e] hover:bg-white/70'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="rounded-2xl border border-[#1f3760] bg-[radial-gradient(circle_at_50%_0%,rgba(77,153,255,0.22),rgba(7,19,41,0.96)_58%)] px-4 py-8 text-center text-white">
+                        {timerMode === 'clock' ? (
+                          <>
+                            <p className="font-heading text-5xl font-semibold tracking-[0.06em] sm:text-7xl">{formatClockTime(clockNow)}</p>
+                            <p className="mt-3 text-base text-[#b7c9e6]">{clockNow.toLocaleDateString('ko-KR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                          </>
+                        ) : null}
+
+                        {timerMode === 'timer' ? (
+                          <>
+                            <p className="font-heading text-5xl font-semibold tracking-[0.06em] sm:text-7xl">{formatSecondsToClock(remainingSeconds)}</p>
+                            <div className="mx-auto mt-4 grid max-w-sm grid-cols-2 gap-2">
+                              <input
+                                type="number"
+                                min={0}
+                                max={180}
+                                value={timerMinuteInput}
+                                onChange={(event) => setTimerMinuteInput(event.target.value)}
+                                className="h-11 rounded-lg border border-[#93aed1] bg-white/90 px-3 text-sm text-[#17345a]"
+                                placeholder="분"
+                              />
+                              <input
+                                type="number"
+                                min={0}
+                                max={59}
+                                value={timerSecondInput}
+                                onChange={(event) => setTimerSecondInput(event.target.value)}
+                                className="h-11 rounded-lg border border-[#93aed1] bg-white/90 px-3 text-sm text-[#17345a]"
+                                placeholder="초"
+                              />
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                              <button type="button" onClick={applyTimerPreset} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                                <Check className="size-4" /> 설정
+                              </button>
+                              <button type="button" onClick={() => setIsTimerRunning((prev) => !prev)} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                                {isTimerRunning ? <Pause className="size-4" /> : <Play className="size-4" />}
+                                {isTimerRunning ? '일시정지' : '시작'}
+                              </button>
+                              <button type="button" onClick={() => { setIsTimerRunning(false); applyTimerPreset() }} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                                <RotateCcw className="size-4" /> 리셋
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+
+                        {timerMode === 'stopwatch' ? (
+                          <>
+                            <p className="font-heading text-5xl font-semibold tracking-[0.06em] sm:text-7xl">{formatStopwatch(stopwatchCentiseconds)}</p>
+                            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                              <button type="button" onClick={() => setIsStopwatchRunning((prev) => !prev)} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                                {isStopwatchRunning ? <Pause className="size-4" /> : <Play className="size-4" />}
+                                {isStopwatchRunning ? '정지' : '시작'}
+                              </button>
+                              <button type="button" onClick={() => { setIsStopwatchRunning(false); setStopwatchCentiseconds(0) }} className="flex h-10 cursor-pointer items-center gap-2 rounded-lg border border-white/40 bg-white/20 px-3 text-sm font-semibold hover:bg-white/30">
+                                <RotateCcw className="size-4" /> 초기화
+                              </button>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {classToolTab === 'roulette' ? (
+                    <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4 sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm text-[#4a678a]">우리반 1번~25번 학생 명단으로 돌아가는 클래스 룰렛입니다.</p>
+                        <button
+                          type="button"
+                          onClick={handleSpinRoulette}
+                          disabled={isRouletteSpinning || classToolStudents.length === 0}
+                          className="flex h-11 cursor-pointer items-center gap-2 rounded-lg bg-[linear-gradient(90deg,#7c3aed_0%,#2563eb_100%)] px-4 text-sm font-semibold text-white transition-all duration-200 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Target className="size-4" /> {isRouletteSpinning ? '돌리는 중...' : '룰렛 시작'}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,420px)_1fr]">
+                        <div className="mx-auto w-full max-w-[420px]">
+                          <div className="relative mx-auto flex h-[320px] w-[320px] items-center justify-center rounded-full border-[10px] border-[#cfe0f4] bg-[#f8fbff] shadow-inner sm:h-[380px] sm:w-[380px]">
+                            <div className="absolute -top-4 z-20 h-0 w-0 border-l-[16px] border-r-[16px] border-t-0 border-b-[22px] border-l-transparent border-r-transparent border-b-[#ef4444]" />
+                            <div
+                              className="h-[280px] w-[280px] rounded-full border border-[#bcd1ea] sm:h-[336px] sm:w-[336px]"
+                              style={{
+                                backgroundImage: `conic-gradient(${classToolStudents
+                                  .map((_, index) => `${index % 2 === 0 ? '#dbeafe' : '#f3e8ff'} ${(index / Math.max(classToolStudents.length, 1)) * 100}% ${((index + 1) / Math.max(classToolStudents.length, 1)) * 100}%`)
+                                  .join(', ')})`,
+                                transform: `rotate(${rouletteRotation}deg)`,
+                                transition: isRouletteSpinning ? 'transform 4.2s cubic-bezier(0.2, 0.9, 0.2, 1)' : 'none',
+                              }}
+                            />
+                            <div className="absolute flex h-20 w-20 items-center justify-center rounded-full border border-[#c8d7ea] bg-white text-[#1f3e63]">
+                              <Dices className="size-8" />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="rounded-xl border border-[#dbe6f3] bg-[#f8fbff] p-3">
+                            <p className="text-sm font-semibold text-[#1e3a8a]">참가 명단</p>
+                            <div className="mt-2 max-h-56 overflow-y-auto text-sm text-[#3f5e82]">
+                              {classToolStudents.map((student) => (
+                                <p key={student.id}>{student.student_number}번 · {student.name}</p>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-[#dbe6f3] bg-[#f8fbff] p-3">
+                            <p className="text-sm font-semibold text-[#1e3a8a]">결과</p>
+                            <p className="mt-1 text-sm text-[#4a678a]">
+                              {rouletteWinner ? (
+                                <span className="font-semibold text-[#7c3aed]">{rouletteWinner.student_number}번 {rouletteWinner.name}</span>
+                              ) : '아직 결과가 없습니다.'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴'].includes(activeMenu) ? (
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
                     <p className="text-xs text-muted-foreground">총 학생</p>
@@ -4511,6 +5036,60 @@ function App() {
           </section>
         </main>
       )}
+
+      {currentDrawResult && authUser ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4">
+          <div className="w-full max-w-xl rounded-3xl border border-[#d7c7ff] bg-white p-6 shadow-[0_24px_50px_rgba(20,12,52,0.32)]">
+            <p className="text-center text-3xl font-semibold text-[#7c3aed]">✨ 🎉 선택된 학생 🎉 ✨</p>
+
+            <div className="mt-6 flex flex-col items-center">
+              <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-[#e5d7ff] bg-[#f6f2ff]">
+                {currentDrawResult.student.avatar_url ? (
+                  <img src={currentDrawResult.student.avatar_url} alt={`${currentDrawResult.student.name} 아바타`} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-xl font-bold text-[#5b3eb9]">{currentDrawResult.student.name.slice(0, 2)}</span>
+                )}
+              </div>
+              <div className="mt-3 rounded-full border border-[#fde68a] bg-[#fef9c3] px-3 py-1 text-sm font-semibold text-[#92400e]">
+                {miniPraiseCard ? `${miniPraiseCard.title} 미니 보상` : '잘했어요 미니 칭찬카드'}
+              </div>
+              <p className="mt-3 text-5xl font-bold text-[#1e293b]">{currentDrawResult.student.name}</p>
+              <p className="mt-1 text-lg text-[#64748b]">{currentDrawResult.student.student_number}번 · {currentDrawResult.drawOrder}번째로 뽑힌 학생</p>
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentDrawResult(null)}
+                className="h-11 cursor-pointer rounded-xl border border-[#d7e3f2] bg-[#f8fbff] px-5 text-sm font-semibold text-[#35597f] hover:bg-[#eef5ff]"
+              >
+                확인
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleGiveMiniPraise()
+                }}
+                className="h-11 cursor-pointer rounded-xl bg-[#10b981] px-5 text-sm font-semibold text-white hover:bg-[#059669]"
+              >
+                👏 잘했어요
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentDrawResult(null)
+                  handleDrawStudents(1)
+                }}
+                disabled={remainingDrawStudents.length === 0}
+                className="h-11 cursor-pointer rounded-xl bg-[linear-gradient(90deg,#7c3aed_0%,#2563eb_100%)] px-5 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                🎲 계속 뽑기
+              </button>
+            </div>
+            <p className="mt-4 text-center text-sm text-[#64748b]">남은 학생: {remainingDrawStudents.length}명</p>
+          </div>
+        </div>
+      ) : null}
 
       {selectedStudentForPin ? (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4">
