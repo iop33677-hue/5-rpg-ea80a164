@@ -218,6 +218,21 @@ def _require_student_self_or_teacher(auth_payload: dict[str, object], target_stu
         raise HTTPException(status_code=403, detail="본인 정보만 접근할 수 있습니다.")
 
 
+def _require_student_self_edit_or_teacher(
+    auth_payload: dict[str, object],
+    target_student_id: int,
+) -> None:
+    if _has_teacher_mode_access(auth_payload):
+        return
+
+    student_id = _student_session_student_id(auth_payload)
+    if student_id is None:
+        raise HTTPException(status_code=403, detail="수정 권한이 없습니다.")
+
+    if student_id != target_student_id:
+        raise HTTPException(status_code=403, detail="PIN으로 로그인한 학생은 본인 정보만 수정할 수 있습니다.")
+
+
 def _can_manage_titles(auth_payload: dict[str, object]) -> bool:
     return _has_teacher_mode_access(auth_payload)
 
@@ -1847,7 +1862,7 @@ def update_student_profile(
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
 ):
-    _require_student_self_or_teacher(auth_payload, student_id)
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
     student = _ensure_student(student_id, db)
 
     if payload.name is not None:
@@ -2639,7 +2654,7 @@ def select_student_title(
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
 ):
-    _require_student_self_or_teacher(auth_payload, student_id)
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
     student = _ensure_student(student_id, db)
     notes = _parse_notes(student)
     earned = _embedded_earned_titles(notes)
@@ -2718,7 +2733,7 @@ def create_student_photo_asset(
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
 ):
-    _require_student_self_or_teacher(auth_payload, student_id)
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
     student = _ensure_student(student_id, db)
     notes = _parse_notes(student)
     photos = _embedded_photos(notes)
@@ -2755,7 +2770,7 @@ def equip_student_avatar_item(
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
 ):
-    _require_student_self_or_teacher(auth_payload, student_id)
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
     student = _ensure_student(student_id, db)
     notes = _parse_notes(student)
     avatars = _embedded_avatars(student, notes)

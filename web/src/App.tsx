@@ -740,6 +740,21 @@ function App() {
     canManageClassContent ||
     (isStudentSession && Boolean(studentDetail?.student.id) && studentDetail?.student.id === studentSessionId)
   const canManageStudentEconomy = Boolean(studentDetail?.can_manage_economy || isPrivilegedUser)
+  const canEditStudentBySession = (targetStudentId: number | null | undefined): boolean => {
+    if (!targetStudentId) {
+      return false
+    }
+
+    if (canManageClassContent) {
+      return true
+    }
+
+    if (!isStudentSession) {
+      return false
+    }
+
+    return studentSessionId === targetStudentId
+  }
   const sidebarItems = isStudentSession
     ? sidebarMenuItems.filter((item) => item.label !== '학생 로그인')
     : sidebarMenuItems
@@ -1068,6 +1083,11 @@ function App() {
       return
     }
 
+    if (!canEditStudentBySession(studentDetail.student.id)) {
+      setStudentDetailError('PIN으로 로그인한 학생은 본인 정보만 수정할 수 있습니다.')
+      return
+    }
+
     setSavingProfile(true)
     setStudentDetailError('')
 
@@ -1087,6 +1107,11 @@ function App() {
   const handleSelectStudentTitle = async () => {
     if (!studentDetail || !selectedEarnedTitleId) {
       setStudentDetailError('선택할 칭호가 없습니다.')
+      return
+    }
+
+    if (!canEditStudentBySession(studentDetail.student.id)) {
+      setStudentDetailError('PIN으로 로그인한 학생은 본인 칭호만 변경할 수 있습니다.')
       return
     }
 
@@ -1473,6 +1498,11 @@ function App() {
       return
     }
 
+    if (!canEditStudentBySession(studentDetail.student.id)) {
+      setPhotoUploadMessage('본인 계정에서만 사진을 업로드할 수 있습니다.')
+      return
+    }
+
     setPhotoUploadMessage('사진 업로드 준비 중...')
 
     try {
@@ -1504,6 +1534,11 @@ function App() {
 
   const handleEquipAvatar = async (avatarItemId: number) => {
     if (!studentDetail) {
+      return
+    }
+
+    if (!canEditStudentBySession(studentDetail.student.id)) {
+      setStudentDetailError('PIN으로 로그인한 학생은 본인 아바타만 장착할 수 있습니다.')
       return
     }
 
@@ -4058,7 +4093,11 @@ function App() {
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border border-[#35567d] bg-[#0d2139]/70 p-3">
-                    <img src="/images/login-logo.png" alt="로그인 배경 이미지" className="h-full w-full object-contain" />
+                    <img
+                      src="/images/neo-hanyang-logo.png"
+                      alt="로그인 배경 이미지"
+                      className="h-full w-full object-contain"
+                    />
                   </div>
 
                   <div className="space-y-3 rounded-2xl border border-[#34567c] bg-[#10253e]/90 p-4">
