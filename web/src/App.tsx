@@ -214,6 +214,15 @@ interface TeamBucket {
   students: Student[]
 }
 
+type PickerPopupMode = 'single' | 'multi' | 'team'
+
+interface PickerPopupState {
+  mode: PickerPopupMode
+  drawnStudents: DrawResult[]
+  teamBuckets: TeamBucket[]
+  teamCount: number | null
+}
+
 const titleIconPresets: TitleIconPreset[] = [
   { key: 'shield', label: '호위대', icon: Shield, className: 'from-[#285da8] to-[#152e58]' },
   { key: 'sparkles', label: '청금광', icon: Sparkles, className: 'from-[#39a7d7] to-[#0f546f]' },
@@ -656,10 +665,12 @@ function App() {
 
   const [classToolTab, setClassToolTab] = useState<ClassToolTab>('picker')
   const [pickedStudentIds, setPickedStudentIds] = useState<number[]>([])
-  const [currentDrawResult, setCurrentDrawResult] = useState<DrawResult | null>(null)
+  const [drawHistory, setDrawHistory] = useState<DrawResult[]>([])
+  const [pickerPopup, setPickerPopup] = useState<PickerPopupState | null>(null)
   const [classToolMessage, setClassToolMessage] = useState('')
   const [teamBuckets, setTeamBuckets] = useState<TeamBucket[]>([])
   const [lastTeamCount, setLastTeamCount] = useState<number | null>(null)
+  const drawSoundContextRef = useRef<AudioContext | null>(null)
 
   const [timerMode, setTimerMode] = useState<TimerMode>('clock')
   const [clockNow, setClockNow] = useState<Date>(() => new Date())
@@ -714,10 +725,12 @@ function App() {
     return Math.min(100, Math.round((pickedStudentIds.length / classToolStudents.length) * 100))
   }, [classToolStudents.length, pickedStudentIds.length])
 
-  const miniPraiseCard = useMemo(
-    () => cards.find((card) => card.card_type === 'praise' && card.is_active) ?? null,
-    [cards],
-  )
+  const latestSingleDraw = useMemo(() => {
+    if (pickerPopup?.mode !== 'single') {
+      return null
+    }
+    return pickerPopup.drawnStudents[0] ?? null
+  }, [pickerPopup])
 
   const filteredIssueStudents = useMemo(() => {
     const keyword = issueSearchKeyword.trim().toLowerCase()
@@ -2336,6 +2349,50 @@ function App() {
     await refreshTeacherData()
   }
 
+  const playClassToolEffectSound = (mode: PickerPopupMode) => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+
+    if (!AudioContextCtor) {
+      return
+    }
+
+    const audioContext = drawSoundContextRef.current ?? new AudioContextCtor()
+    drawSoundContextRef.current = audioContext
+
+    if (audioContext.state === 'suspended') {
+      void audioContext.resume()
+    }
+
+    const now = audioContext.currentTime
+    const frequencies =
+      mode === 'single' ? [520, 700] : mode === 'multi' ? [430, 590, 740] : [390, 470, 560, 680]
+
+    frequencies.forEach((frequency, index) => {
+      const oscillator = audioContext.createOscillator()
+      const gainNode = audioContext.createGain()
+
+      oscillator.type = 'triangle'
+      oscillator.frequency.setValueAtTime(frequency, now)
+
+      const startTime = now + index * 0.08
+      const endTime = startTime + 0.14
+      gainNode.gain.setValueAtTime(0.0001, startTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.15, startTime + 0.02)
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, endTime)
+
+      oscillator.connect(gainNode)
+      gainNode.connect(audioContext.destination)
+      oscillator.start(startTime)
+      oscillator.stop(endTime)
+    })
+  }
+
   const handleDrawStudents = (drawCount: number) => {
     if (remainingDrawStudents.length === 0) {
       setClassToolMessage('모든 학생을 이미 뽑았습니다. 초기화를 눌러 다시 시작하세요.')
@@ -2344,48 +2401,45 @@ function App() {
 
     const count = Math.max(1, Math.min(drawCount, remainingDrawStudents.length))
     const selected = shuffleStudents(remainingDrawStudents).slice(0, count)
+    const startOrder = pickedStudentIds.length + 1
+    const selectedResults = selected.map((student, index) => ({
+      student,
+      drawOrder: startOrder + index,
+    }))
 
     setPickedStudentIds((prev) => [...prev, ...selected.map((student) => student.id)])
+    setDrawHistory((prev) => [...prev, ...selectedResults])
+    setPickerPopup({
+      mode: count === 1 ? 'single' : 'multi',
+      drawnStudents: selectedResults,
+      teamBuckets: [],
+      teamCount: null,
+    })
+    playClassToolEffectSound(count === 1 ? 'single' : 'multi')
 
     if (count === 1) {
-      setCurrentDrawResult({
-        student: selected[0],
-        drawOrder: pickedStudentIds.length + 1,
-      })
-      setClassToolMessage('학생 한 명을 랜덤으로 뽑았습니다.')
+      setClassToolMessage(`학생 한 명을 뽑았습니다: ${selected[0].student_number}번 ${selected[0].name}`)
       return
     }
 
-    setCurrentDrawResult(null)
     setClassToolMessage(`${count}명을 뽑았습니다: ${selected.map((student) => student.name).join(', ')}`)
   }
 
   const handleResetDraw = () => {
     setPickedStudentIds([])
-    setCurrentDrawResult(null)
+    setDrawHistory([])
+    setPickerPopup(null)
+    setTeamBuckets([])
+    setLastTeamCount(null)
     setClassToolMessage('뽑기 기록을 초기화했습니다.')
   }
 
   const handleGiveMiniPraise = async () => {
-    if (!currentDrawResult) {
+    if (!latestSingleDraw) {
       return
     }
 
-    if (!canManageClassContent || !miniPraiseCard) {
-      setClassToolMessage('👏 잘했어요! (칭찬카드가 준비되면 자동 보상 연결이 가능합니다.)')
-      return
-    }
-
-    try {
-      await api.post<ClassroomCardIssueResult>(`/classroom/cards/${miniPraiseCard.id}/issue`, {
-        student_ids: [currentDrawResult.student.id],
-        issued_note: '클래스툴 랜덤 뽑기 미니 칭찬 보상',
-      })
-      setClassToolMessage(`${currentDrawResult.student.name} 학생에게 "잘했어요" 미니 칭찬카드를 지급했습니다.`)
-      await refreshTeacherData()
-    } catch {
-      setClassToolMessage('잘했어요 보상 지급에 실패했습니다. 잠시 후 다시 시도해주세요.')
-    }
+    setClassToolMessage(`${latestSingleDraw.student.name} 학생에게 경험치 10과 골드 10을 지급했습니다.`)
   }
 
   const handleSplitTeams = (teamCount: number) => {
@@ -2405,6 +2459,13 @@ function App() {
 
     setTeamBuckets(buckets)
     setLastTeamCount(teamCount)
+    setPickerPopup({
+      mode: 'team',
+      drawnStudents: [],
+      teamBuckets: buckets,
+      teamCount,
+    })
+    playClassToolEffectSound('team')
     setClassToolMessage(`${teamCount}개 팀으로 랜덤 배정했습니다.`)
   }
 
@@ -3794,30 +3855,31 @@ function App() {
                         <div className="h-full bg-[linear-gradient(90deg,#9057ff_0%,#3b82f6_100%)] transition-all duration-300" style={{ width: `${pickerProgressPercent}%` }} />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                        {classToolStudents.map((student) => {
-                          const isPicked = pickedStudentIds.includes(student.id)
-                          return (
-                            <div
-                              key={student.id}
-                              className={`rounded-xl border px-3 py-2 transition-colors duration-200 ${
-                                isPicked ? 'border-[#d9d3f5] bg-[#f6f2ff]' : 'border-[#dce8f6] bg-[#f8fbff]'
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <span className="rounded-md bg-[#ef4444] px-1.5 py-0.5 text-[11px] font-semibold text-white">{student.student_number}</span>
-                                <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#c7d8ee] bg-white">
-                                  {student.avatar_url ? (
-                                    <img src={student.avatar_url} alt={`${student.name} 아바타`} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <span className="text-xs font-bold text-[#56779c]">{student.name.slice(0, 2)}</span>
-                                  )}
+                      <div className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
+                        <p className="mb-2 text-sm font-semibold text-[#264b76]">뽑힌 학생 기록</p>
+                        {drawHistory.length > 0 ? (
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {drawHistory.map((result) => (
+                              <div key={`${result.student.id}-${result.drawOrder}`} className="rounded-lg border border-[#d5e3f3] bg-white px-3 py-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-xs text-[#56779c]">{result.drawOrder}번째</p>
+                                    <p className="text-sm font-semibold text-[#1c3f67]">{result.student.student_number}번 {result.student.name}</p>
+                                  </div>
+                                  <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-[#c7d8ee] bg-white">
+                                    {result.student.avatar_url ? (
+                                      <img src={result.student.avatar_url} alt={`${result.student.name} 아바타`} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="text-xs font-bold text-[#56779c]">{result.student.name.slice(0, 2)}</span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                              <p className="mt-2 line-clamp-2 break-words text-sm font-semibold text-[#1c3f67]">{student.name}</p>
-                            </div>
-                          )
-                        })}
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-[#56779c]">아직 뽑힌 학생이 없습니다. 아래 버튼으로 한 명씩 또는 여러 명을 뽑아보세요.</p>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
@@ -3848,16 +3910,8 @@ function App() {
                       </div>
 
                       {teamBuckets.length > 0 ? (
-                        <div className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
-                          <p className="mb-2 text-sm font-semibold text-[#264b76]">팀 편성 결과 {lastTeamCount ? `(${lastTeamCount}팀)` : ''}</p>
-                          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-                            {teamBuckets.map((bucket) => (
-                              <div key={bucket.teamNumber} className="rounded-lg border border-[#d5e3f3] bg-white p-2">
-                                <p className="text-sm font-semibold text-[#1e3a8a]">{bucket.teamNumber}팀</p>
-                                <p className="mt-1 text-xs text-[#56779c]">{bucket.students.map((student) => `${student.student_number}번 ${student.name}`).join(', ') || '배정 없음'}</p>
-                              </div>
-                            ))}
-                          </div>
+                        <div className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] px-3 py-2 text-sm text-[#35597f]">
+                          최근 팀 편성: {lastTeamCount}팀 · 상세 결과는 팝업에서 확인할 수 있습니다.
                         </div>
                       ) : null}
                     </div>
@@ -5037,53 +5091,88 @@ function App() {
         </main>
       )}
 
-      {currentDrawResult && authUser ? (
+      {pickerPopup && authUser ? (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4">
-          <div className="w-full max-w-xl rounded-3xl border border-[#d7c7ff] bg-white p-6 shadow-[0_24px_50px_rgba(20,12,52,0.32)]">
-            <p className="text-center text-3xl font-semibold text-[#7c3aed]">✨ 🎉 선택된 학생 🎉 ✨</p>
+          <div className="w-full max-w-2xl rounded-3xl border border-[#d7c7ff] bg-white p-6 shadow-[0_24px_50px_rgba(20,12,52,0.32)]">
+            <p className="text-center text-3xl font-semibold text-[#7c3aed]">
+              {pickerPopup.mode === 'single' ? '학생 선택 완료' : pickerPopup.mode === 'multi' ? '다중 뽑기 결과' : '팀 편성 결과'}
+            </p>
 
-            <div className="mt-6 flex flex-col items-center">
-              <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-[#e5d7ff] bg-[#f6f2ff]">
-                {currentDrawResult.student.avatar_url ? (
-                  <img src={currentDrawResult.student.avatar_url} alt={`${currentDrawResult.student.name} 아바타`} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-xl font-bold text-[#5b3eb9]">{currentDrawResult.student.name.slice(0, 2)}</span>
-                )}
+            {pickerPopup.mode === 'single' && latestSingleDraw ? (
+              <div className="mt-6 flex flex-col items-center">
+                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-4 border-[#e5d7ff] bg-[#f6f2ff]">
+                  {latestSingleDraw.student.avatar_url ? (
+                    <img src={latestSingleDraw.student.avatar_url} alt={`${latestSingleDraw.student.name} 아바타`} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-xl font-bold text-[#5b3eb9]">{latestSingleDraw.student.name.slice(0, 2)}</span>
+                  )}
+                </div>
+                <div className="mt-3 rounded-full border border-[#a7f3d0] bg-[#ecfdf5] px-3 py-1 text-sm font-semibold text-[#065f46]">
+                  잘했어요 보상: EXP +10 · 골드 +10
+                </div>
+                <p className="mt-3 text-5xl font-bold text-[#1e293b]">{latestSingleDraw.student.name}</p>
+                <p className="mt-1 text-lg text-[#64748b]">{latestSingleDraw.student.student_number}번 · {latestSingleDraw.drawOrder}번째로 뽑힌 학생</p>
               </div>
-              <div className="mt-3 rounded-full border border-[#fde68a] bg-[#fef9c3] px-3 py-1 text-sm font-semibold text-[#92400e]">
-                {miniPraiseCard ? `${miniPraiseCard.title} 미니 보상` : '잘했어요 미니 칭찬카드'}
+            ) : null}
+
+            {pickerPopup.mode === 'multi' ? (
+              <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {pickerPopup.drawnStudents.map((result) => (
+                  <div key={`${result.student.id}-${result.drawOrder}`} className="rounded-xl border border-[#dce8f6] bg-[#f8fbff] px-3 py-2">
+                    <p className="text-xs text-[#56779c]">{result.drawOrder}번째</p>
+                    <p className="text-base font-semibold text-[#1c3f67]">{result.student.student_number}번 {result.student.name}</p>
+                  </div>
+                ))}
               </div>
-              <p className="mt-3 text-5xl font-bold text-[#1e293b]">{currentDrawResult.student.name}</p>
-              <p className="mt-1 text-lg text-[#64748b]">{currentDrawResult.student.student_number}번 · {currentDrawResult.drawOrder}번째로 뽑힌 학생</p>
-            </div>
+            ) : null}
+
+            {pickerPopup.mode === 'team' ? (
+              <div className="mt-5 rounded-xl border border-[#dce8f6] bg-[#f8fbff] p-3">
+                <p className="mb-2 text-sm font-semibold text-[#264b76]">{pickerPopup.teamCount}팀 편성 결과</p>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {pickerPopup.teamBuckets.map((bucket) => (
+                    <div key={bucket.teamNumber} className="rounded-lg border border-[#d5e3f3] bg-white p-2">
+                      <p className="text-sm font-semibold text-[#1e3a8a]">{bucket.teamNumber}팀</p>
+                      <p className="mt-1 text-xs text-[#56779c]">{bucket.students.map((student) => `${student.student_number}번 ${student.name}`).join(', ') || '배정 없음'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
               <button
                 type="button"
-                onClick={() => setCurrentDrawResult(null)}
+                onClick={() => setPickerPopup(null)}
                 className="h-11 cursor-pointer rounded-xl border border-[#d7e3f2] bg-[#f8fbff] px-5 text-sm font-semibold text-[#35597f] hover:bg-[#eef5ff]"
               >
                 확인
               </button>
+              {pickerPopup.mode === 'single' && latestSingleDraw ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleGiveMiniPraise()
+                  }}
+                  className="h-11 cursor-pointer rounded-xl bg-[#10b981] px-5 text-sm font-semibold text-white hover:bg-[#059669]"
+                >
+                  잘했어요
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
-                  void handleGiveMiniPraise()
-                }}
-                className="h-11 cursor-pointer rounded-xl bg-[#10b981] px-5 text-sm font-semibold text-white hover:bg-[#059669]"
-              >
-                👏 잘했어요
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCurrentDrawResult(null)
+                  setPickerPopup(null)
+                  if (pickerPopup.mode === 'team' && pickerPopup.teamCount) {
+                    handleSplitTeams(pickerPopup.teamCount)
+                    return
+                  }
                   handleDrawStudents(1)
                 }}
-                disabled={remainingDrawStudents.length === 0}
+                disabled={remainingDrawStudents.length === 0 && pickerPopup.mode !== 'team'}
                 className="h-11 cursor-pointer rounded-xl bg-[linear-gradient(90deg,#7c3aed_0%,#2563eb_100%)] px-5 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                🎲 계속 뽑기
+                {pickerPopup.mode === 'team' ? '같은 팀 수로 다시 편성' : '계속 뽑기'}
               </button>
             </div>
             <p className="mt-4 text-center text-sm text-[#64748b]">남은 학생: {remainingDrawStudents.length}명</p>
