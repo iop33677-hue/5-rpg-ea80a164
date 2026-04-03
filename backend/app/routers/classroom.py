@@ -214,8 +214,13 @@ def _require_student_self_or_teacher(auth_payload: dict[str, object], target_stu
         return
 
     student_id = _student_session_student_id(auth_payload)
-    if student_id is None or student_id != target_student_id:
-        raise HTTPException(status_code=403, detail="본인 정보만 접근할 수 있습니다.")
+    if student_id is None:
+        raise HTTPException(status_code=403, detail="학생 상세정보에 접근할 권한이 없습니다.")
+
+    # 학생 PIN 로그인 사용자는 다른 학생의 상세정보를 열람할 수 있지만,
+    # 수정 권한은 별도 self-edit 가드에서 본인에게만 허용한다.
+    _ = target_student_id
+    return
 
 
 def _require_student_self_edit_or_teacher(
@@ -1586,14 +1591,27 @@ def get_overview(
 def list_students(
     sort_by: str = Query(default="student_number", pattern="^(student_number|level)$"),
     db: Session = Depends(get_db),
-    _: dict[str, object] = Depends(require_auth),
+    auth_payload: dict[str, object] = Depends(require_auth),
 ):
     ordering = (
         asc(Student.student_number)
         if sort_by == "student_number"
         else desc(Student.level)
     )
-    return db.query(Student).order_by(ordering, asc(Student.student_number)).all()
+    students = db.query(Student).order_by(ordering, asc(Student.student_number)).all()
+
+    if _has_teacher_mode_access(auth_payload):
+        return students
+
+    session_student_id = _student_session_student_id(auth_payload)
+    sanitized_students: list[StudentRead] = []
+    for student in students:
+        student_read = StudentRead.model_validate(student)
+        if session_student_id != student.id:
+            student_read = student_read.model_copy(update={"access_code": "비공개"})
+        sanitized_students.append(student_read)
+
+    return sanitized_students
 
 
 @router.get("/public/students", response_model=list[PublicStudentLoginItemRead])
@@ -1823,8 +1841,14 @@ def get_student_detail(
     _save_notes(student, notes)
     db.commit()
 
+    session_student_id = _student_session_student_id(auth_payload)
+    can_view_access_code = _has_teacher_mode_access(auth_payload) or session_student_id == student.id
+    student_read = StudentRead.model_validate(student)
+    if not can_view_access_code:
+        student_read = student_read.model_copy(update={"access_code": "비공개"})
+
     return StudentDetailRead(
-        student=student,
+        student=student_read,
         stats=_compute_student_stats(student, avatars_raw),
         economy=_compute_student_economy(student),
         activities=activities,

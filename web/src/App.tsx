@@ -863,6 +863,54 @@ function App() {
     }
   }
 
+  const refreshStudentData = async () => {
+    setLoadingDashboard(true)
+    try {
+      const [overviewData, studentData, shopData, questionData, raidData, titleData, missionData, cardData] =
+        await Promise.all([
+          api.get<ClassroomOverview>('/classroom/overview'),
+          api.get<Student[]>(`/classroom/students?sort_by=${sortBy}`),
+          api.get<ShopItem[]>('/classroom/shop/items'),
+          api.get<QuestionItem[]>('/classroom/questions'),
+          api.get<RaidSession | null>('/classroom/raid/current'),
+          api.get<TitleDefinition[]>('/classroom/titles?include_inactive=true'),
+          api.get<MissionItem[]>('/classroom/missions?include_inactive=true'),
+          api.get<ClassroomCard[]>('/classroom/cards?include_inactive=true'),
+        ])
+
+      setOverview(overviewData)
+      setStudents(studentData)
+      setStudentLoginAccounts([])
+      setShopItems(shopData)
+      setQuestions(questionData)
+      setRaid(raidData)
+      setClassTitles(titleData)
+      setTitleRewardById((prev) => {
+        const next = { ...prev }
+        for (const title of titleData) {
+          next[title.id] = {
+            reward_exp: title.reward_exp,
+            reward_won: title.reward_won,
+          }
+        }
+        return next
+      })
+      setMissions(missionData)
+      setCards(cardData)
+
+      if (raidData) {
+        const logs = await api.get<RaidAction[]>(`/classroom/raid/sessions/${raidData.id}/log`)
+        setRaidLogs(logs)
+      } else {
+        setRaidLogs([])
+      }
+    } catch {
+      setAuthError('학생 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    } finally {
+      setLoadingDashboard(false)
+    }
+  }
+
 
   useEffect(() => {
     if (authUser) {
@@ -889,11 +937,14 @@ function App() {
   }, [authUser, isStudentSession, sortBy])
 
   useEffect(() => {
-    if (isStudentSession && studentSessionId && !studentDetail) {
-      setActiveMenu('학생 목록')
-      void handleOpenStudentDetail(studentSessionId)
+    if (!authUser || !isStudentSession) {
+      return
     }
-  }, [isStudentSession, studentSessionId, studentDetail])
+
+    setActiveMenu('학생 목록')
+    setStudentDetail(null)
+    void refreshStudentData()
+  }, [authUser, isStudentSession, sortBy])
 
   useEffect(() => {
     if (isStudentSession && activeMenu === '학생 로그인') {
@@ -2546,6 +2597,9 @@ function App() {
                               />
                             </label>
                             {photoUploadMessage ? <p className="text-sm text-[#1d4ed8]">{photoUploadMessage}</p> : null}
+                            <p className="text-xs text-slate-500">
+                              내 컴퓨터 파일을 바로 올리면 안전한 업로드 저장소에 저장되고, 학생 정보에는 사진 경로만 기록됩니다.
+                            </p>
                             {!canEditBasicProfile ? (
                               <p className="text-sm text-slate-500">다른 학생의 사진은 열람만 가능하며 업로드는 본인 계정에서만 가능합니다.</p>
                             ) : null}
