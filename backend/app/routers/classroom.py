@@ -4,10 +4,11 @@ import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import asc, desc, func
 from sqlalchemy.orm import Session
 
-from app.auth import require_auth
+from app.auth import get_current_user
 from app.database import get_db
 from app.models import (
     BankTransaction,
@@ -83,6 +84,54 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/classroom", tags=["classroom"])
+classroom_security = HTTPBearer(auto_error=False)
+
+
+def require_classroom_auth(
+    credentials: HTTPAuthorizationCredentials | None = Depends(classroom_security),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    if credentials is None or not (credentials.credentials or "").strip():
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = credentials.credentials.strip()
+    if token.startswith("student:"):
+        parts = token.split(":", 2)
+        if len(parts) != 3:
+            raise HTTPException(status_code=401, detail="Invalid or expired session token")
+
+        _, student_id_raw, pin_code = parts
+        try:
+            student_id = int(student_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Invalid or expired session token") from exc
+
+        student = (
+            db.query(Student)
+            .filter(Student.id == student_id, Student.is_active.is_(True))
+            .first()
+        )
+        if not student or student.access_code != pin_code:
+            raise HTTPException(status_code=401, detail="Invalid or expired session token")
+
+        return {
+            "sub": f"student-{student.id}",
+            "id": f"student-{student.id}",
+            "email": None,
+            "name": student.name,
+            "role": "student",
+            "auth_type": "student_pin",
+            "student_id": student.id,
+        }
+
+    return get_current_user(credentials=credentials, db=db)
+
+
+def require_auth(
+    auth_payload: dict[str, object] = Depends(require_classroom_auth),
+) -> dict[str, object]:
+    return auth_payload
+
 
 EXP_BRACKETS: list[tuple[int, int, int]] = [
     (1, 200, 20),
@@ -1709,6 +1758,7 @@ def get_student_detail(
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
 ):
+    _require_student_self_or_teacher(auth_payload, student_id)
     student = _ensure_student(student_id, db)
     notes = _parse_notes(student)
     avatars_raw = _embedded_avatars(student, notes)

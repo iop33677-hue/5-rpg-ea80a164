@@ -61,7 +61,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { getCurrentUser, signIn, signOut, signUp, type User } from '@/lib/auth'
+import { getCurrentUser, signIn, signOut, type User } from '@/lib/auth'
 import { signInStudent } from '@/lib/api'
 import {
   api,
@@ -416,7 +416,7 @@ const sidebarMenuItems: SidebarMenuItem[] = [
   { label: '칭찬/주의 카드', icon: BadgePlus, section: '학급 운영' },
   { label: '칭호', icon: Medal, section: '학급 운영' },
   { label: '클래스 툴', icon: Wrench, section: '학급 운영' },
-  { label: '학생 로그인', icon: LogIn, section: '학급 운영' },
+  { label: '학생 로그인', icon: LogIn, section: '상점 및 관리' },
   { label: '1인1역', icon: Star, section: '학급 운영' },
   { label: '나의 성장일지', icon: NotebookPen, section: '학습 확장' },
   { label: '문제 던전', icon: FileSpreadsheet, section: '학습 확장' },
@@ -483,10 +483,8 @@ function parseXlsxRows(data: ArrayBuffer): ParsedQuestionRow[] {
 
 function App() {
   const [authUser, setAuthUser] = useState<User | null>(getCurrentUser())
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
-  const [email, setEmail] = useState('teacher@arcaneclass.quest')
+  const email = 'iop3367@naver.com'
   const [password, setPassword] = useState('ClassQuest123!')
-  const [name, setName] = useState('')
   const [authError, setAuthError] = useState('')
   const [publicStudentItems, setPublicStudentItems] = useState<PublicStudentLoginItem[]>([])
   const [selectedStudentForPin, setSelectedStudentForPin] = useState<PublicStudentLoginItem | null>(null)
@@ -869,21 +867,18 @@ function App() {
   }, [authUser])
 
   useEffect(() => {
-    if (!authUser) {
+    if (!authUser || isStudentSession) {
       return
     }
     void refreshTeacherData()
-  }, [authUser, sortBy])
+  }, [authUser, isStudentSession, sortBy])
 
   useEffect(() => {
-    if (isStudentSession && studentSessionId && students.length > 0 && !studentDetail) {
-      const ownStudent = students.find((student) => student.id === studentSessionId)
-      if (ownStudent) {
-        setActiveMenu('학생 목록')
-        void handleOpenStudentDetail(ownStudent.id)
-      }
+    if (isStudentSession && studentSessionId && !studentDetail) {
+      setActiveMenu('학생 목록')
+      void handleOpenStudentDetail(studentSessionId)
     }
-  }, [isStudentSession, studentSessionId, students, studentDetail])
+  }, [isStudentSession, studentSessionId, studentDetail])
 
   useEffect(() => {
     if (isStudentSession && activeMenu === '학생 로그인') {
@@ -1552,8 +1547,13 @@ function App() {
 
   const handleAuthSubmit = async () => {
     setAuthError('')
-    const result =
-      authMode === 'signin' ? await signIn(email, password) : await signUp(email, password, name)
+
+    if (email.trim().toLowerCase() !== 'iop3367@naver.com') {
+      setAuthError('등록된 교사 계정으로만 로그인할 수 있습니다.')
+      return
+    }
+
+    const result = await signIn(email, password)
 
     if (!result.success) {
       setAuthError(result.error ?? '로그인에 실패했습니다.')
@@ -1561,7 +1561,7 @@ function App() {
     }
 
     setAuthUser(getCurrentUser())
-    if (authMode === 'signin' && result.token) {
+    if (result.token) {
       window.location.href = '/dashboard'
     }
   }
@@ -2826,7 +2826,7 @@ function App() {
                         <p className="text-sm font-semibold text-[#1e3f64]">성장 기록</p>
                         <p className="text-xs text-[#6983a0]">발급 기록을 통해 학생 행동 변화를 추적합니다.</p>
                       </div>
-                      <div className="rounded-xl border border-[#d8cef4] bg-[#f3eeff] px-3.5 py-2.5">
+                      <div className="rounded-xl border border-[#cbdcf2] bg-[#eef4ff] px-3.5 py-2.5">
                         <p className="text-sm font-semibold text-[#1e3f64]">동기 부여</p>
                         <p className="text-xs text-[#6983a0]">긍정/주의 피드백을 즉시 제공해 행동을 강화합니다.</p>
                       </div>
@@ -4058,24 +4058,15 @@ function App() {
                   </div>
 
                   <div className="overflow-hidden rounded-2xl border border-[#35567d] bg-[#0d2139]/70 p-3">
-                    <img src="/images/neo-hanyang-logo.png" alt="네오 한양 로고" className="h-full w-full object-contain" />
+                    <img src="/images/login-logo.png" alt="로그인 배경 이미지" className="h-full w-full object-contain" />
                   </div>
 
                   <div className="space-y-3 rounded-2xl border border-[#34567c] bg-[#10253e]/90 p-4">
                     <h2 className="flex items-center gap-2 text-sm font-semibold text-[#e3efff]"><LogIn className="size-4" /> 교사 로그인</h2>
-                    {authMode === 'signup' ? (
-                      <input
-                        className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#eaf2ff]"
-                        placeholder="이름"
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                      />
-                    ) : null}
                     <input
-                      className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#eaf2ff]"
-                      placeholder="이메일"
+                      className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#9db8d8]"
                       value={email}
-                      onChange={(event) => setEmail(event.target.value)}
+                      readOnly
                     />
                     <input
                       className="h-11 w-full rounded-xl border border-[#4a6e99] bg-[#0c1f35] px-3 text-sm text-[#eaf2ff]"
@@ -4085,14 +4076,7 @@ function App() {
                       onChange={(event) => setPassword(event.target.value)}
                     />
                     <Button className="h-11 w-full cursor-pointer" onClick={handleAuthSubmit}>
-                      {authMode === 'signin' ? '교사 로그인' : '교사 계정 생성'}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      className="h-11 w-full cursor-pointer text-[#c5dbf5] hover:bg-[#1b395f] hover:text-white"
-                      onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}
-                    >
-                      {authMode === 'signin' ? '계정이 없으면 가입하기' : '이미 계정이 있습니다'}
+                      교사 로그인
                     </Button>
                   </div>
                 </div>
