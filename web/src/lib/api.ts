@@ -137,6 +137,11 @@ export interface Student {
   role_name: string | null
   avatar_url: string | null
   class_points: number
+  total_exp?: number
+  won_balance?: number
+  nyang_balance?: number
+  core_balance?: number
+  starlight_shard_balance?: number
   attack_power: number
   defense_power: number
   support_power: number
@@ -166,6 +171,140 @@ export interface ShopItem {
   cost_points: number
   stock: number
   is_active: boolean
+}
+
+export interface ActivityCoupon {
+  id: number
+  name: string
+  description: string | null
+  icon_emoji: string
+  price_gold: number
+  stock: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ActivityCouponCreatePayload {
+  name: string
+  description?: string | null
+  icon_emoji: string
+  price_gold: number
+  stock: number
+  is_active?: boolean
+}
+
+export interface ActivityCouponUpdatePayload {
+  name?: string
+  description?: string | null
+  icon_emoji?: string
+  price_gold?: number
+  stock?: number
+  is_active?: boolean
+}
+
+export interface ActivityCouponPurchasePayload {
+  student_id: number
+  coupon_id: number
+  quantity: number
+}
+
+export interface ActivityCouponPurchase {
+  id: number
+  student_id: number
+  coupon_id: number
+  quantity: number
+  total_price_gold: number
+  created_at: string
+}
+
+export interface ActivityCouponUsagePayload {
+  student_id: number
+  coupon_id: number
+  quantity: number
+  note?: string | null
+}
+
+export interface ActivityCouponUsage {
+  id: number
+  student_id: number
+  coupon_id: number
+  quantity: number
+  note: string | null
+  created_at: string
+}
+
+export interface StudentCouponInventoryRow {
+  coupon_id: number
+  coupon_name: string
+  icon_emoji: string
+  purchased_quantity: number
+  used_quantity: number
+  remaining_quantity: number
+}
+
+export interface CouponLedgerEntry {
+  entry_type: 'purchase' | 'usage'
+  coupon_id: number
+  coupon_name: string
+  icon_emoji: string
+  student_id: number
+  student_number: number
+  student_name: string
+  quantity: number
+  amount_gold: number
+  note: string | null
+  created_at: string
+}
+
+export interface FundingProject {
+  id: number
+  title: string
+  description: string | null
+  reward_plan: string | null
+  target_amount: number
+  current_amount: number
+  status: 'active' | 'completed' | 'closed' | string
+  progress_percent: number
+  contributor_count: number
+  contribution_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface FundingProjectCreatePayload {
+  title: string
+  description?: string | null
+  reward_plan?: string | null
+  target_amount: number
+}
+
+export interface FundingProjectUpdatePayload {
+  title?: string
+  description?: string | null
+  reward_plan?: string | null
+  target_amount?: number
+  status?: 'active' | 'completed' | 'closed'
+}
+
+export interface FundingContributionPayload {
+  student_id: number
+  amount: number
+}
+
+export interface FundingContribution {
+  id: number
+  project_id: number
+  student_id: number
+  student_number: number
+  student_name: string
+  amount: number
+  created_at: string
+}
+
+export interface FundingProjectDetail {
+  project: FundingProject
+  contributions: FundingContribution[]
 }
 
 export interface QuestionItem {

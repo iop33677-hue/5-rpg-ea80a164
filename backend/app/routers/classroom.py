@@ -11,8 +11,13 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import (
+    ActivityCoupon,
+    ActivityCouponPurchase,
+    ActivityCouponUsage,
     BankTransaction,
     CardEvent,
+    FundingContribution,
+    FundingProject,
     QuestionBankItem,
     QuestionFile,
     RaidActionLog,
@@ -22,6 +27,13 @@ from app.models import (
     Student,
 )
 from app.schemas import (
+    ActivityCouponCreate,
+    ActivityCouponPurchaseCreate,
+    ActivityCouponPurchaseRead,
+    ActivityCouponRead,
+    ActivityCouponUpdate,
+    ActivityCouponUsageCreate,
+    ActivityCouponUsageRead,
     BankTransactionCreate,
     BankTransactionRead,
     CardEventCreate,
@@ -35,6 +47,13 @@ from app.schemas import (
     ClassroomCardRecipientRead,
     ClassroomCardUpdate,
     ClassroomOverview,
+    CouponLedgerEntryRead,
+    FundingContributionCreate,
+    FundingContributionRead,
+    FundingProjectCreate,
+    FundingProjectDetailRead,
+    FundingProjectRead,
+    FundingProjectUpdate,
     QuestionBulkCreate,
     QuestionFileCreate,
     QuestionFileRead,
@@ -62,6 +81,7 @@ from app.schemas import (
     StudentAccessCodeUpdate,
     StudentAdminEconomyUpdate,
     StudentAvatarItemRead,
+    StudentCouponInventoryRow,
     StudentCreate,
     StudentDetailRead,
     StudentEconomyRead,
@@ -3156,6 +3176,36 @@ def create_bank_transaction(
     return transaction
 
 
+def _build_funding_project_read(project: FundingProject, db: Session) -> FundingProjectRead:
+    contribution_count = (
+        db.query(FundingContribution).filter(FundingContribution.project_id == project.id).count()
+    )
+    contributor_count = (
+        db.query(func.count(func.distinct(FundingContribution.student_id)))
+        .filter(FundingContribution.project_id == project.id)
+        .scalar()
+        or 0
+    )
+    progress_percent = 0.0
+    if project.target_amount > 0:
+        progress_percent = min(100.0, round((project.current_amount / project.target_amount) * 100, 1))
+
+    return FundingProjectRead(
+        id=project.id,
+        title=project.title,
+        description=project.description,
+        reward_plan=project.reward_plan,
+        target_amount=project.target_amount,
+        current_amount=project.current_amount,
+        status=project.status,
+        progress_percent=progress_percent,
+        contributor_count=int(contributor_count),
+        contribution_count=int(contribution_count),
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+    )
+
+
 @router.get("/shop/items", response_model=list[ShopItemRead])
 def list_shop_items(
     db: Session = Depends(get_db),
@@ -3211,6 +3261,455 @@ def purchase_item(
     db.commit()
     db.refresh(purchase)
     return purchase
+
+
+@router.get("/activity-shop/coupons", response_model=list[ActivityCouponRead])
+def list_activity_coupons(
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: dict[str, object] = Depends(require_auth),
+):
+    query = db.query(ActivityCoupon)
+    if not include_inactive:
+        query = query.filter(ActivityCoupon.is_active.is_(True))
+    return query.order_by(asc(ActivityCoupon.id)).all()
+
+
+@router.post("/activity-shop/coupons", response_model=ActivityCouponRead)
+def create_activity_coupon(
+    payload: ActivityCouponCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="쿠폰은 교사/관리자만 생성할 수 있습니다.")
+
+    coupon = ActivityCoupon(
+        **payload.model_dump(),
+        created_by_user_id=_current_user_id(auth_payload),
+    )
+    db.add(coupon)
+    db.commit()
+    db.refresh(coupon)
+    return coupon
+
+
+@router.patch("/activity-shop/coupons/{coupon_id}", response_model=ActivityCouponRead)
+def update_activity_coupon(
+    coupon_id: int,
+    payload: ActivityCouponUpdate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="쿠폰은 교사/관리자만 수정할 수 있습니다.")
+
+    coupon = db.query(ActivityCoupon).filter(ActivityCoupon.id == coupon_id).first()
+    if not coupon:
+        raise HTTPException(status_code=404, detail="쿠폰을 찾을 수 없습니다.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        return coupon
+
+    for key, value in updates.items():
+        setattr(coupon, key, value)
+
+    db.commit()
+    db.refresh(coupon)
+    return coupon
+
+
+@router.delete("/activity-shop/coupons/{coupon_id}")
+def deactivate_activity_coupon(
+    coupon_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="쿠폰은 교사/관리자만 관리할 수 있습니다.")
+
+    coupon = db.query(ActivityCoupon).filter(ActivityCoupon.id == coupon_id).first()
+    if not coupon:
+        raise HTTPException(status_code=404, detail="쿠폰을 찾을 수 없습니다.")
+
+    coupon.is_active = False
+    db.commit()
+    return {"success": True}
+
+
+@router.post("/activity-shop/coupons/purchase", response_model=ActivityCouponPurchaseRead)
+def purchase_activity_coupon(
+    payload: ActivityCouponPurchaseCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, payload.student_id)
+
+    student = db.query(Student).filter(Student.id == payload.student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    coupon = (
+        db.query(ActivityCoupon)
+        .filter(ActivityCoupon.id == payload.coupon_id, ActivityCoupon.is_active.is_(True))
+        .first()
+    )
+    if not coupon:
+        raise HTTPException(status_code=404, detail="쿠폰을 찾을 수 없습니다.")
+
+    if coupon.stock < payload.quantity:
+        raise HTTPException(status_code=400, detail="쿠폰 재고가 부족합니다.")
+
+    total_price = coupon.price_gold * payload.quantity
+    if student.won_balance < total_price:
+        raise HTTPException(status_code=400, detail="골드가 부족합니다.")
+
+    student.won_balance -= total_price
+    coupon.stock -= payload.quantity
+
+    purchase = ActivityCouponPurchase(
+        student_id=student.id,
+        coupon_id=coupon.id,
+        quantity=payload.quantity,
+        total_price_gold=total_price,
+    )
+    db.add(purchase)
+    db.commit()
+    db.refresh(purchase)
+    return purchase
+
+
+@router.post("/activity-shop/coupons/use", response_model=ActivityCouponUsageRead)
+def use_activity_coupon(
+    payload: ActivityCouponUsageCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, payload.student_id)
+
+    student = db.query(Student).filter(Student.id == payload.student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    coupon = db.query(ActivityCoupon).filter(ActivityCoupon.id == payload.coupon_id).first()
+    if not coupon:
+        raise HTTPException(status_code=404, detail="쿠폰을 찾을 수 없습니다.")
+
+    purchased_quantity = (
+        db.query(func.coalesce(func.sum(ActivityCouponPurchase.quantity), 0))
+        .filter(
+            ActivityCouponPurchase.student_id == student.id,
+            ActivityCouponPurchase.coupon_id == coupon.id,
+        )
+        .scalar()
+        or 0
+    )
+    used_quantity = (
+        db.query(func.coalesce(func.sum(ActivityCouponUsage.quantity), 0))
+        .filter(
+            ActivityCouponUsage.student_id == student.id,
+            ActivityCouponUsage.coupon_id == coupon.id,
+        )
+        .scalar()
+        or 0
+    )
+    remaining_quantity = int(purchased_quantity) - int(used_quantity)
+
+    if remaining_quantity < payload.quantity:
+        raise HTTPException(status_code=400, detail="사용 가능한 쿠폰 수량이 부족합니다.")
+
+    usage = ActivityCouponUsage(
+        student_id=student.id,
+        coupon_id=coupon.id,
+        quantity=payload.quantity,
+        note=payload.note,
+    )
+    db.add(usage)
+    db.commit()
+    db.refresh(usage)
+    return usage
+
+
+@router.get("/activity-shop/students/{student_id}/coupon-inventory", response_model=list[StudentCouponInventoryRow])
+def get_student_coupon_inventory(
+    student_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_or_teacher(auth_payload, student_id)
+
+    student = db.query(Student).filter(Student.id == student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    coupons = db.query(ActivityCoupon).order_by(asc(ActivityCoupon.id)).all()
+    rows: list[StudentCouponInventoryRow] = []
+    for coupon in coupons:
+        purchased_quantity = (
+            db.query(func.coalesce(func.sum(ActivityCouponPurchase.quantity), 0))
+            .filter(
+                ActivityCouponPurchase.student_id == student.id,
+                ActivityCouponPurchase.coupon_id == coupon.id,
+            )
+            .scalar()
+            or 0
+        )
+        used_quantity = (
+            db.query(func.coalesce(func.sum(ActivityCouponUsage.quantity), 0))
+            .filter(
+                ActivityCouponUsage.student_id == student.id,
+                ActivityCouponUsage.coupon_id == coupon.id,
+            )
+            .scalar()
+            or 0
+        )
+        remaining_quantity = int(purchased_quantity) - int(used_quantity)
+        if purchased_quantity <= 0 and used_quantity <= 0:
+            continue
+
+        rows.append(
+            StudentCouponInventoryRow(
+                coupon_id=coupon.id,
+                coupon_name=coupon.name,
+                icon_emoji=coupon.icon_emoji,
+                purchased_quantity=int(purchased_quantity),
+                used_quantity=int(used_quantity),
+                remaining_quantity=max(0, remaining_quantity),
+            )
+        )
+
+    return rows
+
+
+@router.get("/activity-shop/coupon-ledger", response_model=list[CouponLedgerEntryRead])
+def get_coupon_ledger(
+    coupon_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: dict[str, object] = Depends(require_auth),
+):
+    purchase_query = db.query(ActivityCouponPurchase, ActivityCoupon, Student).join(
+        ActivityCoupon, ActivityCoupon.id == ActivityCouponPurchase.coupon_id
+    ).join(Student, Student.id == ActivityCouponPurchase.student_id)
+
+    usage_query = db.query(ActivityCouponUsage, ActivityCoupon, Student).join(
+        ActivityCoupon, ActivityCoupon.id == ActivityCouponUsage.coupon_id
+    ).join(Student, Student.id == ActivityCouponUsage.student_id)
+
+    if coupon_id is not None:
+        purchase_query = purchase_query.filter(ActivityCouponPurchase.coupon_id == coupon_id)
+        usage_query = usage_query.filter(ActivityCouponUsage.coupon_id == coupon_id)
+
+    purchases = purchase_query.order_by(desc(ActivityCouponPurchase.created_at)).limit(300).all()
+    usages = usage_query.order_by(desc(ActivityCouponUsage.created_at)).limit(300).all()
+
+    entries: list[CouponLedgerEntryRead] = []
+    for purchase, coupon, student in purchases:
+        entries.append(
+            CouponLedgerEntryRead(
+                entry_type="purchase",
+                coupon_id=coupon.id,
+                coupon_name=coupon.name,
+                icon_emoji=coupon.icon_emoji,
+                student_id=student.id,
+                student_number=student.student_number,
+                student_name=student.name,
+                quantity=purchase.quantity,
+                amount_gold=purchase.total_price_gold,
+                note=None,
+                created_at=purchase.created_at,
+            )
+        )
+
+    for usage, coupon, student in usages:
+        entries.append(
+            CouponLedgerEntryRead(
+                entry_type="usage",
+                coupon_id=coupon.id,
+                coupon_name=coupon.name,
+                icon_emoji=coupon.icon_emoji,
+                student_id=student.id,
+                student_number=student.student_number,
+                student_name=student.name,
+                quantity=usage.quantity,
+                amount_gold=0,
+                note=usage.note,
+                created_at=usage.created_at,
+            )
+        )
+
+    entries.sort(key=lambda item: item.created_at, reverse=True)
+    return entries[:300]
+
+
+@router.get("/activity-shop/funding-projects", response_model=list[FundingProjectRead])
+def list_funding_projects(
+    db: Session = Depends(get_db),
+    _: dict[str, object] = Depends(require_auth),
+):
+    projects = db.query(FundingProject).order_by(desc(FundingProject.created_at)).all()
+    return [_build_funding_project_read(project, db) for project in projects]
+
+
+@router.post("/activity-shop/funding-projects", response_model=FundingProjectRead)
+def create_funding_project(
+    payload: FundingProjectCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="펀딩 프로젝트는 교사/관리자만 생성할 수 있습니다.")
+
+    project = FundingProject(
+        title=payload.title,
+        description=payload.description,
+        reward_plan=payload.reward_plan,
+        target_amount=payload.target_amount,
+        current_amount=0,
+        status="active",
+        created_by_user_id=_current_user_id(auth_payload),
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return _build_funding_project_read(project, db)
+
+
+@router.patch("/activity-shop/funding-projects/{project_id}", response_model=FundingProjectRead)
+def update_funding_project(
+    project_id: int,
+    payload: FundingProjectUpdate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="펀딩 프로젝트는 교사/관리자만 수정할 수 있습니다.")
+
+    project = db.query(FundingProject).filter(FundingProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "target_amount" in updates:
+        target_amount = updates["target_amount"]
+        if isinstance(target_amount, int) and target_amount < project.current_amount:
+            raise HTTPException(status_code=400, detail="목표 금액은 현재 모금액보다 작을 수 없습니다.")
+
+    for key, value in updates.items():
+        setattr(project, key, value)
+
+    if project.status == "completed" and project.completed_at is None:
+        project.completed_at = datetime.now(UTC)
+
+    db.commit()
+    db.refresh(project)
+    return _build_funding_project_read(project, db)
+
+
+@router.delete("/activity-shop/funding-projects/{project_id}")
+def close_funding_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="펀딩 프로젝트는 교사/관리자만 관리할 수 있습니다.")
+
+    project = db.query(FundingProject).filter(FundingProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+
+    project.status = "closed"
+    db.commit()
+    return {"success": True}
+
+
+@router.post("/activity-shop/funding-projects/{project_id}/contributions", response_model=FundingContributionRead)
+def create_funding_contribution(
+    project_id: int,
+    payload: FundingContributionCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, payload.student_id)
+
+    project = db.query(FundingProject).filter(FundingProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+
+    if project.status != "active":
+        raise HTTPException(status_code=400, detail="진행 중인 프로젝트에만 기부할 수 있습니다.")
+
+    student = db.query(Student).filter(Student.id == payload.student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    if student.won_balance < payload.amount:
+        raise HTTPException(status_code=400, detail="골드가 부족합니다.")
+
+    student.won_balance -= payload.amount
+    project.current_amount += payload.amount
+
+    if project.current_amount >= project.target_amount:
+        project.status = "completed"
+        if project.completed_at is None:
+            project.completed_at = datetime.now(UTC)
+
+    contribution = FundingContribution(
+        project_id=project.id,
+        student_id=student.id,
+        amount=payload.amount,
+    )
+    db.add(contribution)
+    db.commit()
+    db.refresh(contribution)
+
+    return FundingContributionRead(
+        id=contribution.id,
+        project_id=contribution.project_id,
+        student_id=contribution.student_id,
+        student_number=student.student_number,
+        student_name=student.name,
+        amount=contribution.amount,
+        created_at=contribution.created_at,
+    )
+
+
+@router.get("/activity-shop/funding-projects/{project_id}/detail", response_model=FundingProjectDetailRead)
+def get_funding_project_detail(
+    project_id: int,
+    db: Session = Depends(get_db),
+    _: dict[str, object] = Depends(require_auth),
+):
+    project = db.query(FundingProject).filter(FundingProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+
+    contribution_rows = (
+        db.query(FundingContribution, Student)
+        .join(Student, Student.id == FundingContribution.student_id)
+        .filter(FundingContribution.project_id == project.id)
+        .order_by(desc(FundingContribution.created_at))
+        .all()
+    )
+
+    contributions = [
+        FundingContributionRead(
+            id=contribution.id,
+            project_id=contribution.project_id,
+            student_id=student.id,
+            student_number=student.student_number,
+            student_name=student.name,
+            amount=contribution.amount,
+            created_at=contribution.created_at,
+        )
+        for contribution, student in contribution_rows
+    ]
+
+    return FundingProjectDetailRead(
+        project=_build_funding_project_read(project, db),
+        contributions=contributions,
+    )
 
 
 @router.post("/question-files", response_model=QuestionFileRead)

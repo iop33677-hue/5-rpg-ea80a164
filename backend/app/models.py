@@ -134,6 +134,89 @@ class ShopPurchase(Base):
     )
 
 
+class ActivityCoupon(Base):
+    __tablename__ = "activity_coupons"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    icon_emoji: Mapped[str] = mapped_column(String(16), default="🎟️")
+    price_gold: Mapped[int] = mapped_column(Integer, nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ActivityCouponPurchase(Base):
+    __tablename__ = "activity_coupon_purchases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    coupon_id: Mapped[int] = mapped_column(ForeignKey("activity_coupons.id"), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    total_price_gold: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ActivityCouponUsage(Base):
+    __tablename__ = "activity_coupon_usages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    coupon_id: Mapped[int] = mapped_column(ForeignKey("activity_coupons.id"), index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FundingProject(Base):
+    __tablename__ = "funding_projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(140), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reward_plan: Mapped[str | None] = mapped_column(String(260), nullable=True)
+    target_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_amount: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(24), default="active")
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class FundingContribution(Base):
+    __tablename__ = "funding_contributions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("funding_projects.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class QuestionFile(Base):
     __tablename__ = "question_files"
 
@@ -284,9 +367,27 @@ Student.bank_transactions = relationship(
     "BankTransaction", backref="student", cascade="all,delete"
 )
 Student.purchases = relationship("ShopPurchase", backref="student", cascade="all,delete")
+Student.coupon_purchases = relationship(
+    "ActivityCouponPurchase", backref="student", cascade="all,delete"
+)
+Student.coupon_usages = relationship(
+    "ActivityCouponUsage", backref="student", cascade="all,delete"
+)
+Student.funding_contributions = relationship(
+    "FundingContribution", backref="student", cascade="all,delete"
+)
 Student.raid_actions = relationship("RaidActionLog", backref="student", cascade="all,delete")
 
 ShopItem.purchases = relationship("ShopPurchase", backref="item", cascade="all,delete")
+ActivityCoupon.purchases = relationship(
+    "ActivityCouponPurchase", backref="coupon", cascade="all,delete"
+)
+ActivityCoupon.usages = relationship(
+    "ActivityCouponUsage", backref="coupon", cascade="all,delete"
+)
+FundingProject.contributions = relationship(
+    "FundingContribution", backref="project", cascade="all,delete"
+)
 QuestionFile.questions = relationship(
     "QuestionBankItem", backref="source_file", cascade="all,delete"
 )

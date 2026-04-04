@@ -75,7 +75,21 @@ import {
   type ClassroomCardHistoryResponse,
   type ClassroomCardIssueResult,
   type ClassroomCardUpdatePayload,
+  type ActivityCoupon,
+  type ActivityCouponCreatePayload,
+  type ActivityCouponPurchase,
+  type ActivityCouponPurchasePayload,
+  type ActivityCouponUpdatePayload,
+  type ActivityCouponUsage,
+  type ActivityCouponUsagePayload,
   type ClassroomOverview,
+  type CouponLedgerEntry,
+  type FundingContribution,
+  type FundingContributionPayload,
+  type FundingProject,
+  type FundingProjectCreatePayload,
+  type FundingProjectDetail,
+  type FundingProjectUpdatePayload,
   type QuestionItem,
   type MissionAchieverUpdateResult,
   type MissionCreatePayload,
@@ -88,6 +102,7 @@ import {
   type Student,
   type StudentDetail,
   type StudentEconomyUpdatePayload,
+  type StudentCouponInventoryRow,
   type StudentLoginAccount,
   type StudentTitleRecipient,
   type TitleAchievementMode,
@@ -217,6 +232,30 @@ interface TeamBucket {
 interface StopwatchLap {
   id: number
   timestamp: number
+}
+
+type ActivityShopTab = 'coupon-store' | 'coupon-buy' | 'coupon-use' | 'funding'
+
+interface CouponFormState {
+  name: string
+  description: string
+  icon_emoji: string
+  price_gold: string
+  stock: string
+  is_active: boolean
+}
+
+interface CouponUseFormState {
+  coupon_id: string
+  quantity: string
+  note: string
+}
+
+interface FundingFormState {
+  title: string
+  description: string
+  reward_plan: string
+  target_amount: string
 }
 
 type PickerPopupMode = 'single' | 'multi' | 'team'
@@ -454,6 +493,30 @@ const emptyCardForm = (cardType: 'praise' | 'warning'): CardFormState => ({
   stat_delta: '1',
 })
 
+const couponEmojiPresets = ['🎟️', '🎁', '🍿', '🥤', '📚', '🧩', '🎨', '🎵', '⚽', '🛴'] as const
+
+const emptyCouponForm: CouponFormState = {
+  name: '',
+  description: '',
+  icon_emoji: couponEmojiPresets[0],
+  price_gold: '250',
+  stock: '10',
+  is_active: true,
+}
+
+const emptyCouponUseForm: CouponUseFormState = {
+  coupon_id: '',
+  quantity: '1',
+  note: '',
+}
+
+const emptyFundingForm: FundingFormState = {
+  title: '',
+  description: '',
+  reward_plan: '',
+  target_amount: '20000',
+}
+
 const sidebarMenuItems: SidebarMenuItem[] = [
   { label: '학생 목록', icon: Users, section: '학급 운영' },
   { label: '미션', icon: ScrollText, section: '학급 운영' },
@@ -581,6 +644,23 @@ function App() {
   const [studentLoginActionStudentId, setStudentLoginActionStudentId] = useState<number | null>(null)
   const [studentLoginActionType, setStudentLoginActionType] = useState<'delete' | 'reset-pin' | null>(null)
   const [shopItems, setShopItems] = useState<ShopItem[]>([])
+  const [activityShopTab, setActivityShopTab] = useState<ActivityShopTab>('coupon-store')
+  const [activityCoupons, setActivityCoupons] = useState<ActivityCoupon[]>([])
+  const [couponLedger, setCouponLedger] = useState<CouponLedgerEntry[]>([])
+  const [couponInventory, setCouponInventory] = useState<StudentCouponInventoryRow[]>([])
+  const [fundingProjects, setFundingProjects] = useState<FundingProject[]>([])
+  const [selectedFundingProjectId, setSelectedFundingProjectId] = useState<number | null>(null)
+  const [fundingProjectDetail, setFundingProjectDetail] = useState<FundingProjectDetail | null>(null)
+  const [selectedStudentForActivityShop, setSelectedStudentForActivityShop] = useState<number | null>(null)
+  const [couponForm, setCouponForm] = useState<CouponFormState>(emptyCouponForm)
+  const [editingCouponId, setEditingCouponId] = useState<number | null>(null)
+  const [couponUseForm, setCouponUseForm] = useState<CouponUseFormState>(emptyCouponUseForm)
+  const [fundingForm, setFundingForm] = useState<FundingFormState>(emptyFundingForm)
+  const [editingFundingProjectId, setEditingFundingProjectId] = useState<number | null>(null)
+  const [couponPurchaseQuantity, setCouponPurchaseQuantity] = useState('1')
+  const [fundingContributionAmount, setFundingContributionAmount] = useState('100')
+  const [activityShopMessage, setActivityShopMessage] = useState('')
+  const [activityShopLoading, setActivityShopLoading] = useState(false)
   const [questions, setQuestions] = useState<QuestionItem[]>([])
   const [raid, setRaid] = useState<RaidSession | null>(null)
   const [raidLogs, setRaidLogs] = useState<RaidAction[]>([])
@@ -907,6 +987,27 @@ function App() {
     setIsMobileTabDrawerOpen(false)
   }
 
+  const activityShopSelectableStudents = useMemo(() => {
+    if (isStudentSession && Number.isFinite(studentSessionId)) {
+      return students.filter((student) => student.id === studentSessionId)
+    }
+    return students
+  }, [isStudentSession, studentSessionId, students])
+
+  const selectedActivityStudent = useMemo(() => {
+    if (!selectedStudentForActivityShop) {
+      return null
+    }
+    return students.find((student) => student.id === selectedStudentForActivityShop) ?? null
+  }, [selectedStudentForActivityShop, students])
+
+  const selectedFundingProject = useMemo(() => {
+    if (!selectedFundingProjectId) {
+      return null
+    }
+    return fundingProjects.find((project) => project.id === selectedFundingProjectId) ?? null
+  }, [fundingProjects, selectedFundingProjectId])
+
   const studentDetailExpRate = useMemo(() => {
     if (!studentDetail) {
       return 0
@@ -963,20 +1064,35 @@ function App() {
   const refreshTeacherData = async () => {
     setLoadingDashboard(true)
     try {
-      const [overviewData, studentData, loginAccountData, shopData, questionData, raidData, titleData, missionData, cardData] =
-        await Promise.all([
-          api.get<ClassroomOverview>('/classroom/overview'),
-          api.get<Student[]>(`/classroom/students?sort_by=${sortBy}`),
-          canManageClassContent
-            ? api.get<StudentLoginAccount[]>('/classroom/students/login-accounts')
-            : Promise.resolve([]),
-          api.get<ShopItem[]>('/classroom/shop/items'),
-          api.get<QuestionItem[]>('/classroom/questions'),
-          api.get<RaidSession | null>('/classroom/raid/current'),
-          api.get<TitleDefinition[]>('/classroom/titles?include_inactive=true'),
-          api.get<MissionItem[]>('/classroom/missions?include_inactive=true'),
-          api.get<ClassroomCard[]>('/classroom/cards?include_inactive=true'),
-        ])
+      const [
+        overviewData,
+        studentData,
+        loginAccountData,
+        shopData,
+        questionData,
+        raidData,
+        titleData,
+        missionData,
+        cardData,
+        couponData,
+        couponLedgerData,
+        fundingProjectData,
+      ] = await Promise.all([
+        api.get<ClassroomOverview>('/classroom/overview'),
+        api.get<Student[]>(`/classroom/students?sort_by=${sortBy}`),
+        canManageClassContent
+          ? api.get<StudentLoginAccount[]>('/classroom/students/login-accounts')
+          : Promise.resolve([]),
+        api.get<ShopItem[]>('/classroom/shop/items'),
+        api.get<QuestionItem[]>('/classroom/questions'),
+        api.get<RaidSession | null>('/classroom/raid/current'),
+        api.get<TitleDefinition[]>('/classroom/titles?include_inactive=true'),
+        api.get<MissionItem[]>('/classroom/missions?include_inactive=true'),
+        api.get<ClassroomCard[]>('/classroom/cards?include_inactive=true'),
+        api.get<ActivityCoupon[]>('/classroom/activity-shop/coupons?include_inactive=true'),
+        api.get<CouponLedgerEntry[]>('/classroom/activity-shop/coupon-ledger'),
+        api.get<FundingProject[]>('/classroom/activity-shop/funding-projects'),
+      ])
 
       setOverview(overviewData)
       setStudents(studentData)
@@ -997,6 +1113,14 @@ function App() {
       })
       setMissions(missionData)
       setCards(cardData)
+      setActivityCoupons(couponData)
+      setCouponLedger(couponLedgerData)
+      setFundingProjects(fundingProjectData)
+      if (fundingProjectData.length > 0) {
+        setSelectedFundingProjectId((prev) => prev ?? fundingProjectData[0]?.id ?? null)
+      } else {
+        setSelectedFundingProjectId(null)
+      }
 
       if (raidData) {
         const logs = await api.get<RaidAction[]>(`/classroom/raid/sessions/${raidData.id}/log`)
@@ -1014,17 +1138,31 @@ function App() {
   const refreshStudentData = async () => {
     setLoadingDashboard(true)
     try {
-      const [overviewData, studentData, shopData, questionData, raidData, titleData, missionData, cardData] =
-        await Promise.all([
-          api.get<ClassroomOverview>('/classroom/overview'),
-          api.get<Student[]>(`/classroom/students?sort_by=${sortBy}`),
-          api.get<ShopItem[]>('/classroom/shop/items'),
-          api.get<QuestionItem[]>('/classroom/questions'),
-          api.get<RaidSession | null>('/classroom/raid/current'),
-          api.get<TitleDefinition[]>('/classroom/titles?include_inactive=true'),
-          api.get<MissionItem[]>('/classroom/missions?include_inactive=true'),
-          api.get<ClassroomCard[]>('/classroom/cards?include_inactive=true'),
-        ])
+      const [
+        overviewData,
+        studentData,
+        shopData,
+        questionData,
+        raidData,
+        titleData,
+        missionData,
+        cardData,
+        couponData,
+        couponLedgerData,
+        fundingProjectData,
+      ] = await Promise.all([
+        api.get<ClassroomOverview>('/classroom/overview'),
+        api.get<Student[]>(`/classroom/students?sort_by=${sortBy}`),
+        api.get<ShopItem[]>('/classroom/shop/items'),
+        api.get<QuestionItem[]>('/classroom/questions'),
+        api.get<RaidSession | null>('/classroom/raid/current'),
+        api.get<TitleDefinition[]>('/classroom/titles?include_inactive=true'),
+        api.get<MissionItem[]>('/classroom/missions?include_inactive=true'),
+        api.get<ClassroomCard[]>('/classroom/cards?include_inactive=true'),
+        api.get<ActivityCoupon[]>('/classroom/activity-shop/coupons'),
+        api.get<CouponLedgerEntry[]>('/classroom/activity-shop/coupon-ledger'),
+        api.get<FundingProject[]>('/classroom/activity-shop/funding-projects'),
+      ])
 
       setOverview(overviewData)
       setStudents(studentData)
@@ -1045,6 +1183,14 @@ function App() {
       })
       setMissions(missionData)
       setCards(cardData)
+      setActivityCoupons(couponData)
+      setCouponLedger(couponLedgerData)
+      setFundingProjects(fundingProjectData)
+      if (fundingProjectData.length > 0) {
+        setSelectedFundingProjectId((prev) => prev ?? fundingProjectData[0]?.id ?? null)
+      } else {
+        setSelectedFundingProjectId(null)
+      }
 
       if (raidData) {
         const logs = await api.get<RaidAction[]>(`/classroom/raid/sessions/${raidData.id}/log`)
@@ -1056,6 +1202,283 @@ function App() {
       setAuthError('학생 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.')
     } finally {
       setLoadingDashboard(false)
+    }
+  }
+
+  const refreshActivityShopData = async (): Promise<void> => {
+    const couponEndpoint = canManageClassContent
+      ? '/classroom/activity-shop/coupons?include_inactive=true'
+      : '/classroom/activity-shop/coupons'
+
+    const [couponData, couponLedgerData, fundingProjectData] = await Promise.all([
+      api.get<ActivityCoupon[]>(couponEndpoint),
+      api.get<CouponLedgerEntry[]>('/classroom/activity-shop/coupon-ledger'),
+      api.get<FundingProject[]>('/classroom/activity-shop/funding-projects'),
+    ])
+
+    setActivityCoupons(couponData)
+    setCouponLedger(couponLedgerData)
+    setFundingProjects(fundingProjectData)
+
+    if (fundingProjectData.length > 0) {
+      setSelectedFundingProjectId((prev) => prev ?? fundingProjectData[0]?.id ?? null)
+    } else {
+      setSelectedFundingProjectId(null)
+      setFundingProjectDetail(null)
+    }
+  }
+
+  const handleOpenCreateCoupon = (): void => {
+    setEditingCouponId(null)
+    setCouponForm(emptyCouponForm)
+  }
+
+  const handleOpenEditCoupon = (coupon: ActivityCoupon): void => {
+    setEditingCouponId(coupon.id)
+    setCouponForm({
+      name: coupon.name,
+      description: coupon.description ?? '',
+      icon_emoji: coupon.icon_emoji,
+      price_gold: String(coupon.price_gold),
+      stock: String(coupon.stock),
+      is_active: coupon.is_active,
+    })
+  }
+
+  const handleSaveCoupon = async (): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    const name = couponForm.name.trim()
+    if (!name) {
+      setActivityShopMessage('쿠폰 이름을 입력해 주세요.')
+      return
+    }
+
+    const priceGold = Number(couponForm.price_gold)
+    const stock = Number(couponForm.stock)
+    if (!Number.isFinite(priceGold) || priceGold <= 0 || !Number.isFinite(stock) || stock < 0) {
+      setActivityShopMessage('가격과 재고를 올바르게 입력해 주세요.')
+      return
+    }
+
+    const payload: ActivityCouponCreatePayload = {
+      name,
+      description: couponForm.description.trim() || null,
+      icon_emoji: couponForm.icon_emoji,
+      price_gold: Math.round(priceGold),
+      stock: Math.round(stock),
+      is_active: couponForm.is_active,
+    }
+
+    const updatePayload: ActivityCouponUpdatePayload = {
+      ...payload,
+    }
+
+    setActivityShopLoading(true)
+    try {
+      if (editingCouponId) {
+        await api.patch<ActivityCoupon>(`/classroom/activity-shop/coupons/${editingCouponId}`, updatePayload)
+        setActivityShopMessage('쿠폰 정보를 수정했습니다.')
+      } else {
+        await api.post<ActivityCoupon>('/classroom/activity-shop/coupons', payload)
+        setActivityShopMessage('새 쿠폰을 만들었습니다.')
+      }
+
+      setCouponForm(emptyCouponForm)
+      setEditingCouponId(null)
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('쿠폰 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleDeactivateCoupon = async (couponId: number): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    setActivityShopLoading(true)
+    try {
+      await api.delete<{ success: boolean }>(`/classroom/activity-shop/coupons/${couponId}`)
+      setActivityShopMessage('쿠폰을 비활성화했습니다.')
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('쿠폰 비활성화에 실패했습니다.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handlePurchaseCoupon = async (coupon: ActivityCoupon): Promise<void> => {
+    if (!selectedStudentForActivityShop) {
+      setActivityShopMessage('학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    const quantity = Number(couponPurchaseQuantity)
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setActivityShopMessage('구매 수량을 올바르게 입력해 주세요.')
+      return
+    }
+
+    const payload: ActivityCouponPurchasePayload = {
+      student_id: selectedStudentForActivityShop,
+      coupon_id: coupon.id,
+      quantity: Math.min(20, Math.round(quantity)),
+    }
+
+    setActivityShopLoading(true)
+    try {
+      await api.post<ActivityCouponPurchase>('/classroom/activity-shop/coupons/purchase', payload)
+      setActivityShopMessage(`${coupon.name} 쿠폰을 구매했습니다.`)
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('쿠폰 구매에 실패했습니다. 골드/재고를 확인해 주세요.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleUseCoupon = async (): Promise<void> => {
+    if (!selectedStudentForActivityShop) {
+      setActivityShopMessage('학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    const couponId = Number(couponUseForm.coupon_id)
+    const quantity = Number(couponUseForm.quantity)
+    if (!Number.isFinite(couponId) || couponId <= 0 || !Number.isFinite(quantity) || quantity <= 0) {
+      setActivityShopMessage('사용할 쿠폰과 수량을 선택해 주세요.')
+      return
+    }
+
+    const payload: ActivityCouponUsagePayload = {
+      student_id: selectedStudentForActivityShop,
+      coupon_id: couponId,
+      quantity: Math.min(20, Math.round(quantity)),
+      note: couponUseForm.note.trim() || null,
+    }
+
+    setActivityShopLoading(true)
+    try {
+      await api.post<ActivityCouponUsage>('/classroom/activity-shop/coupons/use', payload)
+      setActivityShopMessage('쿠폰 사용 기록이 저장되었습니다.')
+      setCouponUseForm(emptyCouponUseForm)
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('쿠폰 사용 처리에 실패했습니다.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleOpenCreateFunding = (): void => {
+    setEditingFundingProjectId(null)
+    setFundingForm(emptyFundingForm)
+  }
+
+  const handleOpenEditFunding = (project: FundingProject): void => {
+    setEditingFundingProjectId(project.id)
+    setFundingForm({
+      title: project.title,
+      description: project.description ?? '',
+      reward_plan: project.reward_plan ?? '',
+      target_amount: String(project.target_amount),
+    })
+  }
+
+  const handleSaveFundingProject = async (): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    const title = fundingForm.title.trim()
+    const targetAmount = Number(fundingForm.target_amount)
+    if (!title || !Number.isFinite(targetAmount) || targetAmount <= 0) {
+      setActivityShopMessage('프로젝트 이름과 목표 금액을 확인해 주세요.')
+      return
+    }
+
+    const payload: FundingProjectCreatePayload = {
+      title,
+      description: fundingForm.description.trim() || null,
+      reward_plan: fundingForm.reward_plan.trim() || null,
+      target_amount: Math.round(targetAmount),
+    }
+
+    const updatePayload: FundingProjectUpdatePayload = {
+      ...payload,
+    }
+
+    setActivityShopLoading(true)
+    try {
+      if (editingFundingProjectId) {
+        await api.patch<FundingProject>(`/classroom/activity-shop/funding-projects/${editingFundingProjectId}`, updatePayload)
+        setActivityShopMessage('펀딩 프로젝트를 수정했습니다.')
+      } else {
+        await api.post<FundingProject>('/classroom/activity-shop/funding-projects', payload)
+        setActivityShopMessage('펀딩 프로젝트를 만들었습니다.')
+      }
+
+      setFundingForm(emptyFundingForm)
+      setEditingFundingProjectId(null)
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('프로젝트 저장에 실패했습니다.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleCloseFundingProject = async (projectId: number): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    setActivityShopLoading(true)
+    try {
+      await api.delete<{ success: boolean }>(`/classroom/activity-shop/funding-projects/${projectId}`)
+      setActivityShopMessage('프로젝트를 마감했습니다.')
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('프로젝트 마감에 실패했습니다.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleContributeFunding = async (projectId: number): Promise<void> => {
+    if (!selectedStudentForActivityShop) {
+      setActivityShopMessage('학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    const amount = Number(fundingContributionAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setActivityShopMessage('기부 금액을 올바르게 입력해 주세요.')
+      return
+    }
+
+    const payload: FundingContributionPayload = {
+      student_id: selectedStudentForActivityShop,
+      amount: Math.round(amount),
+    }
+
+    setActivityShopLoading(true)
+    try {
+      await api.post<FundingContribution>(`/classroom/activity-shop/funding-projects/${projectId}/contributions`, payload)
+      setActivityShopMessage('기부가 반영되었습니다.')
+      await refreshActivityShopData()
+      const detail = await api.get<FundingProjectDetail>(`/classroom/activity-shop/funding-projects/${projectId}/detail`)
+      setFundingProjectDetail(detail)
+    } catch {
+      setActivityShopMessage('기부 처리에 실패했습니다. 잔액을 확인해 주세요.')
+    } finally {
+      setActivityShopLoading(false)
     }
   }
 
@@ -1099,6 +1522,54 @@ function App() {
       setActiveMenu('학생 목록')
     }
   }, [isStudentSession, activeMenu])
+
+  useEffect(() => {
+    if (activityShopSelectableStudents.length === 0) {
+      setSelectedStudentForActivityShop(null)
+      return
+    }
+
+    const studentExists = activityShopSelectableStudents.some((student) => student.id === selectedStudentForActivityShop)
+    if (!selectedStudentForActivityShop || !studentExists) {
+      setSelectedStudentForActivityShop(activityShopSelectableStudents[0]?.id ?? null)
+    }
+  }, [activityShopSelectableStudents, selectedStudentForActivityShop])
+
+  useEffect(() => {
+    if (!authUser || !selectedStudentForActivityShop) {
+      setCouponInventory([])
+      return
+    }
+
+    const loadCouponInventory = async () => {
+      try {
+        const rows = await api.get<StudentCouponInventoryRow[]>(`/classroom/activity-shop/students/${selectedStudentForActivityShop}/coupon-inventory`)
+        setCouponInventory(rows)
+      } catch {
+        setCouponInventory([])
+      }
+    }
+
+    void loadCouponInventory()
+  }, [authUser, selectedStudentForActivityShop, activityCoupons.length])
+
+  useEffect(() => {
+    if (!authUser || !selectedFundingProjectId) {
+      setFundingProjectDetail(null)
+      return
+    }
+
+    const loadFundingDetail = async () => {
+      try {
+        const detail = await api.get<FundingProjectDetail>(`/classroom/activity-shop/funding-projects/${selectedFundingProjectId}/detail`)
+        setFundingProjectDetail(detail)
+      } catch {
+        setFundingProjectDetail(null)
+      }
+    }
+
+    void loadFundingDetail()
+  }, [authUser, selectedFundingProjectId, fundingProjects.length])
 
 
   useEffect(() => {
@@ -1891,6 +2362,7 @@ function App() {
 
     setAuthUser(getCurrentUser())
     setActiveMenu('학생 목록')
+    window.location.href = '/dashboard'
   }
 
   const openCreateCardModal = (cardType: 'praise' | 'warning') => {
@@ -3859,6 +4331,262 @@ function App() {
                 </div>
               ) : null}
 
+              {activeMenu === '학급 활동 상점' ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-heading text-2xl font-semibold text-slate-900">학급 활동 상점</h3>
+                        <p className="text-sm text-slate-600">쿠폰 상점 · 구매 · 사용 · 펀딩 프로젝트를 한 탭에서 관리합니다.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={selectedStudentForActivityShop ?? ''}
+                          onChange={(event) => setSelectedStudentForActivityShop(Number(event.target.value) || null)}
+                          className="h-11 min-w-[170px] rounded-xl border border-[#c9d9f0] bg-white px-3 text-sm text-slate-900"
+                        >
+                          {activityShopSelectableStudents.map((student) => (
+                            <option key={student.id} value={student.id}>
+                              {student.student_number}번 {student.name}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="rounded-xl border border-[#c9d9ef] bg-white px-3 py-2 text-sm font-semibold text-[#1e3a8a]">
+                          보유 골드 {selectedActivityStudent?.won_balance ?? 0}G
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {[
+                        { key: 'coupon-store', label: '쿠폰 상점' },
+                        { key: 'coupon-buy', label: '쿠폰 구매하기' },
+                        { key: 'coupon-use', label: '쿠폰 사용하기' },
+                        { key: 'funding', label: '펀딩 프로젝트 관리' },
+                      ].map((tab) => (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => setActivityShopTab(tab.key as ActivityShopTab)}
+                          className={`h-11 cursor-pointer rounded-xl border text-sm font-semibold transition-colors duration-200 ${
+                            activityShopTab === tab.key
+                              ? 'border-[#8f5dff] bg-[#f4ecff] text-[#6d28d9]'
+                              : 'border-[#d9e5f4] bg-white text-[#415b7a] hover:bg-[#f6f9ff]'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {activityShopMessage ? <p className="mt-3 text-sm font-medium text-[#1e4d86]">{activityShopMessage}</p> : null}
+                  </div>
+
+                  {activityShopTab === 'coupon-store' ? (
+                    <div className="space-y-4">
+                      {canManageClassContent ? (
+                        <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="text-lg font-semibold text-[#153a63]">{editingCouponId ? '쿠폰 수정' : '새 쿠폰 만들기'}</h4>
+                            <button type="button" onClick={handleOpenCreateCoupon} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">
+                              새 폼
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="쿠폰 이름" value={couponForm.name} onChange={(event) => setCouponForm((prev) => ({ ...prev, name: event.target.value }))} />
+                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="가격(골드)" value={couponForm.price_gold} onChange={(event) => setCouponForm((prev) => ({ ...prev, price_gold: event.target.value }))} />
+                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="재고" value={couponForm.stock} onChange={(event) => setCouponForm((prev) => ({ ...prev, stock: event.target.value }))} />
+                            <select className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponForm.icon_emoji} onChange={(event) => setCouponForm((prev) => ({ ...prev, icon_emoji: event.target.value }))}>
+                              {couponEmojiPresets.map((emoji) => (
+                                <option key={emoji} value={emoji}>{emoji}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <textarea className="mt-2 min-h-[84px] w-full rounded-lg border border-[#c9d9f0] px-3 py-2 text-sm" placeholder="쿠폰 설명" value={couponForm.description} onChange={(event) => setCouponForm((prev) => ({ ...prev, description: event.target.value }))} />
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                            <label className="flex items-center gap-2 text-sm text-[#35597f]">
+                              <input type="checkbox" checked={couponForm.is_active} onChange={(event) => setCouponForm((prev) => ({ ...prev, is_active: event.target.checked }))} />
+                              판매 활성화
+                            </label>
+                            <button type="button" onClick={() => void handleSaveCoupon()} disabled={activityShopLoading} className="h-10 cursor-pointer rounded-lg bg-[#10b981] px-4 text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">
+                              {editingCouponId ? '쿠폰 수정 저장' : '쿠폰 생성'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {activityCoupons.map((coupon) => (
+                          <div key={coupon.id} className="rounded-2xl border border-[#d8e4f2] bg-white p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-2xl" aria-hidden="true">{coupon.icon_emoji}</p>
+                                <h5 className="mt-1 text-lg font-semibold text-[#153a63]">{coupon.name}</h5>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xl font-bold text-[#d97706]">{coupon.price_gold}</p>
+                                <p className="text-xs font-semibold text-[#d97706]">GOLD</p>
+                              </div>
+                            </div>
+                            <p className="mt-2 min-h-[40px] text-sm text-[#5c7594]">{coupon.description || '설명이 등록되지 않았습니다.'}</p>
+                            <div className="mt-3 flex items-center justify-between text-xs text-[#456792]">
+                              <span className={`rounded-full px-2 py-1 ${coupon.is_active ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#b91c1c]'}`}>{coupon.is_active ? '판매중' : '비활성'}</span>
+                              <span>재고 {coupon.stock}개</span>
+                            </div>
+                            {canManageClassContent ? (
+                              <div className="mt-3 flex items-center gap-2">
+                                <button type="button" onClick={() => handleOpenEditCoupon(coupon)} className="h-9 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-xs text-[#21446f] hover:bg-[#eef5ff]">수정</button>
+                                <button type="button" onClick={() => void handleDeactivateCoupon(coupon.id)} className="h-9 cursor-pointer rounded-lg border border-[#e1cad1] bg-white px-3 text-xs text-[#a43b4f] hover:bg-[#fff4f6]">비활성화</button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {activityShopTab === 'coupon-buy' ? (
+                    <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm text-[#4a678a]">구매 수량</p>
+                        <input className="h-10 w-24 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponPurchaseQuantity} onChange={(event) => setCouponPurchaseQuantity(event.target.value)} />
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {activityCoupons.filter((coupon) => coupon.is_active).map((coupon) => (
+                          <div key={coupon.id} className="rounded-2xl border border-[#d8e4f2] bg-[#f8fbff] p-4">
+                            <div className="flex items-center justify-between">
+                              <p className="text-base font-semibold text-[#153a63]">{coupon.icon_emoji} {coupon.name}</p>
+                              <p className="text-sm font-bold text-[#d97706]">{coupon.price_gold}G</p>
+                            </div>
+                            <p className="mt-1 text-xs text-[#5c7594]">재고 {coupon.stock}개</p>
+                            <button
+                              type="button"
+                              disabled={activityShopLoading || coupon.stock <= 0}
+                              onClick={() => void handlePurchaseCoupon(coupon)}
+                              className="mt-3 h-10 w-full cursor-pointer rounded-lg bg-[#2563eb] text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              구매하기
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {activityShopTab === 'coupon-use' ? (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 사용하기</h4>
+                        <select className="h-11 w-full rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.coupon_id} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, coupon_id: event.target.value }))}>
+                          <option value="">사용할 쿠폰 선택</option>
+                          {couponInventory.filter((row) => row.remaining_quantity > 0).map((row) => (
+                            <option key={row.coupon_id} value={row.coupon_id}>{row.icon_emoji} {row.coupon_name} (잔여 {row.remaining_quantity})</option>
+                          ))}
+                        </select>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.quantity} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, quantity: event.target.value }))} placeholder="수량" />
+                          <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.note} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, note: event.target.value }))} placeholder="사용 메모" />
+                        </div>
+                        <button type="button" onClick={() => void handleUseCoupon()} disabled={activityShopLoading} className="h-10 w-full cursor-pointer rounded-lg bg-[#10b981] text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">쿠폰 사용 기록</button>
+
+                        <div className="rounded-xl border border-[#dbe6f3] bg-[#f8fbff] p-3">
+                          <p className="text-sm font-semibold text-[#1e3a8a]">내 쿠폰 보유 현황</p>
+                          <div className="mt-2 space-y-1 text-sm text-[#4a678a]">
+                            {couponInventory.length > 0 ? couponInventory.map((row) => (
+                              <p key={row.coupon_id}>{row.icon_emoji} {row.coupon_name} · 보유 {row.remaining_quantity} / 구매 {row.purchased_quantity} / 사용 {row.used_quantity}</p>
+                            )) : <p>아직 보유한 쿠폰이 없습니다.</p>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 로그</h4>
+                        <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                          {couponLedger.slice(0, 120).map((entry, index) => (
+                            <div key={`${entry.entry_type}-${entry.coupon_id}-${entry.student_id}-${entry.created_at}-${index}`} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-semibold text-[#1f3f66]">{entry.icon_emoji} {entry.coupon_name}</p>
+                                <span className={`rounded-full px-2 py-0.5 text-xs ${entry.entry_type === 'purchase' ? 'bg-[#dbeafe] text-[#1d4ed8]' : 'bg-[#dcfce7] text-[#166534]'}`}>
+                                  {entry.entry_type === 'purchase' ? '구매' : '사용'}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-[#5f7897]">{entry.student_number}번 {entry.student_name} · 수량 {entry.quantity}{entry.entry_type === 'purchase' ? ` · ${entry.amount_gold}G` : ''}</p>
+                              <p className="text-xs text-[#7890ac]">{new Date(entry.created_at).toLocaleString('ko-KR')}{entry.note ? ` · ${entry.note}` : ''}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {activityShopTab === 'funding' ? (
+                    <div className="space-y-4">
+                      {canManageClassContent ? (
+                        <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="text-lg font-semibold text-[#153a63]">{editingFundingProjectId ? '펀딩 프로젝트 수정' : '새 프로젝트 만들기'}</h4>
+                            <button type="button" onClick={handleOpenCreateFunding} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">새 폼</button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.title} onChange={(event) => setFundingForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="프로젝트 이름" />
+                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.target_amount} onChange={(event) => setFundingForm((prev) => ({ ...prev, target_amount: event.target.value }))} placeholder="목표 금액" />
+                          </div>
+                          <textarea className="mt-2 min-h-[80px] w-full rounded-lg border border-[#c9d9f0] px-3 py-2 text-sm" value={fundingForm.description} onChange={(event) => setFundingForm((prev) => ({ ...prev, description: event.target.value }))} placeholder="프로젝트 설명" />
+                          <input className="mt-2 h-11 w-full rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.reward_plan} onChange={(event) => setFundingForm((prev) => ({ ...prev, reward_plan: event.target.value }))} placeholder="달성 시 활동 계획" />
+                          <button type="button" onClick={() => void handleSaveFundingProject()} disabled={activityShopLoading} className="mt-3 h-10 cursor-pointer rounded-lg bg-[#10b981] px-4 text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">
+                            {editingFundingProjectId ? '프로젝트 수정 저장' : '프로젝트 생성'}
+                          </button>
+                        </div>
+                      ) : null}
+
+                      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+                        <div className="space-y-3">
+                          {fundingProjects.map((project) => (
+                            <div key={project.id} className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                <button type="button" onClick={() => setSelectedFundingProjectId(project.id)} className="cursor-pointer text-left">
+                                  <h5 className="text-lg font-semibold text-[#153a63]">{project.title}</h5>
+                                  <p className="text-sm text-[#5c7594]">{project.description || '설명 없음'}</p>
+                                </button>
+                                <span className={`rounded-full px-2 py-1 text-xs ${project.status === 'completed' ? 'bg-[#dcfce7] text-[#166534]' : project.status === 'closed' ? 'bg-[#e2e8f0] text-[#475569]' : 'bg-[#dbeafe] text-[#1d4ed8]'}`}>{project.status === 'completed' ? '달성' : project.status === 'closed' ? '마감' : '진행중'}</span>
+                              </div>
+                              <p className="mt-2 text-sm font-semibold text-[#1f3f66]">{project.current_amount.toLocaleString()} / {project.target_amount.toLocaleString()} P ({project.progress_percent}%)</p>
+                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[#e6eef9]"><div className="h-full bg-[linear-gradient(90deg,#3b82f6_0%,#10b981_100%)]" style={{ width: `${Math.min(100, project.progress_percent)}%` }} /></div>
+                              <p className="mt-2 text-xs text-[#6b84a2]">기부자 {project.contributor_count}명 · 기부 {project.contribution_count}회</p>
+
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <input className="h-10 w-28 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingContributionAmount} onChange={(event) => setFundingContributionAmount(event.target.value)} />
+                                <button type="button" onClick={() => void handleContributeFunding(project.id)} disabled={activityShopLoading || project.status !== 'active'} className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-60">기부하기</button>
+                                {canManageClassContent ? (
+                                  <>
+                                    <button type="button" onClick={() => handleOpenEditFunding(project)} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">수정</button>
+                                    <button type="button" onClick={() => void handleCloseFundingProject(project.id)} className="h-10 cursor-pointer rounded-lg border border-[#e1cad1] bg-white px-3 text-sm text-[#a43b4f] hover:bg-[#fff4f6]">마감</button>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                          <h4 className="text-lg font-semibold text-[#153a63]">프로젝트 기록</h4>
+                          <p className="mt-1 text-sm text-[#5c7594]">{selectedFundingProject ? `${selectedFundingProject.title} 기부 내역` : '프로젝트를 선택해 주세요.'}</p>
+                          <div className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
+                            {fundingProjectDetail?.contributions.length ? fundingProjectDetail.contributions.map((contribution) => (
+                              <div key={contribution.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
+                                <p className="font-semibold text-[#1f3f66]">{contribution.student_number}번 {contribution.student_name}</p>
+                                <p className="text-xs text-[#5f7897]">+{contribution.amount} P</p>
+                                <p className="text-xs text-[#7890ac]">{new Date(contribution.created_at).toLocaleString('ko-KR')}</p>
+                              </div>
+                            )) : <p className="text-sm text-[#7890ac]">아직 기부 기록이 없습니다.</p>}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {activeMenu === '클래스 툴' ? (
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-5">
@@ -4185,7 +4913,7 @@ function App() {
                 </div>
               ) : null}
 
-              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴'].includes(activeMenu) ? (
+              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴', '학급 활동 상점'].includes(activeMenu) ? (
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
                     <p className="text-xs text-muted-foreground">총 학생</p>

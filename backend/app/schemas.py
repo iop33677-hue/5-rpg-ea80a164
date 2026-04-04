@@ -612,6 +612,140 @@ class ShopPurchaseRead(BaseSchema):
     created_at: datetime
 
 
+class ActivityCouponCreate(BaseSchema):
+    name: str = Field(min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=260)
+    icon_emoji: str = Field(default="🎟️", min_length=1, max_length=16)
+    price_gold: int = Field(gt=0, le=100000)
+    stock: int = Field(ge=0, le=9999)
+    is_active: bool = True
+
+
+class ActivityCouponUpdate(BaseSchema):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=260)
+    icon_emoji: str | None = Field(default=None, min_length=1, max_length=16)
+    price_gold: int | None = Field(default=None, gt=0, le=100000)
+    stock: int | None = Field(default=None, ge=0, le=9999)
+    is_active: bool | None = None
+
+
+class ActivityCouponRead(BaseSchema):
+    id: int
+    name: str
+    description: str | None
+    icon_emoji: str
+    price_gold: int
+    stock: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActivityCouponPurchaseCreate(BaseSchema):
+    student_id: int
+    coupon_id: int
+    quantity: int = Field(default=1, ge=1, le=20)
+
+
+class ActivityCouponPurchaseRead(BaseSchema):
+    id: int
+    student_id: int
+    coupon_id: int
+    quantity: int
+    total_price_gold: int
+    created_at: datetime
+
+
+class ActivityCouponUsageCreate(BaseSchema):
+    student_id: int
+    coupon_id: int
+    quantity: int = Field(default=1, ge=1, le=20)
+    note: str | None = Field(default=None, max_length=240)
+
+
+class ActivityCouponUsageRead(BaseSchema):
+    id: int
+    student_id: int
+    coupon_id: int
+    quantity: int
+    note: str | None
+    created_at: datetime
+
+
+class StudentCouponInventoryRow(BaseSchema):
+    coupon_id: int
+    coupon_name: str
+    icon_emoji: str
+    purchased_quantity: int
+    used_quantity: int
+    remaining_quantity: int
+
+
+class CouponLedgerEntryRead(BaseSchema):
+    entry_type: Literal['purchase', 'usage']
+    coupon_id: int
+    coupon_name: str
+    icon_emoji: str
+    student_id: int
+    student_number: int
+    student_name: str
+    quantity: int
+    amount_gold: int
+    note: str | None
+    created_at: datetime
+
+
+class FundingProjectCreate(BaseSchema):
+    title: str = Field(min_length=2, max_length=140)
+    description: str | None = Field(default=None, max_length=1200)
+    reward_plan: str | None = Field(default=None, max_length=260)
+    target_amount: int = Field(gt=0, le=5000000)
+
+
+class FundingProjectUpdate(BaseSchema):
+    title: str | None = Field(default=None, min_length=2, max_length=140)
+    description: str | None = Field(default=None, max_length=1200)
+    reward_plan: str | None = Field(default=None, max_length=260)
+    target_amount: int | None = Field(default=None, gt=0, le=5000000)
+    status: Literal['active', 'completed', 'closed'] | None = None
+
+
+class FundingProjectRead(BaseSchema):
+    id: int
+    title: str
+    description: str | None
+    reward_plan: str | None
+    target_amount: int
+    current_amount: int
+    status: str
+    progress_percent: float
+    contributor_count: int
+    contribution_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class FundingContributionCreate(BaseSchema):
+    student_id: int
+    amount: int = Field(gt=0, le=100000)
+
+
+class FundingContributionRead(BaseSchema):
+    id: int
+    project_id: int
+    student_id: int
+    student_number: int
+    student_name: str
+    amount: int
+    created_at: datetime
+
+
+class FundingProjectDetailRead(BaseSchema):
+    project: FundingProjectRead
+    contributions: list[FundingContributionRead]
+
+
 class QuestionFileCreate(BaseSchema):
     public_url: str
     object_key: str
