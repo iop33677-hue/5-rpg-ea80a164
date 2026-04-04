@@ -244,6 +244,7 @@ export interface StudentCouponInventoryRow {
 }
 
 export interface CouponLedgerEntry {
+  entry_id: number
   entry_type: 'purchase' | 'usage'
   coupon_id: number
   coupon_name: string
@@ -255,6 +256,11 @@ export interface CouponLedgerEntry {
   amount_gold: number
   note: string | null
   created_at: string
+}
+
+export interface CouponLedgerCancelResponse {
+  success: boolean
+  message: string
 }
 
 export interface FundingProject {

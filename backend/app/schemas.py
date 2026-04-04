@@ -683,6 +683,7 @@ class StudentCouponInventoryRow(BaseSchema):
 
 
 class CouponLedgerEntryRead(BaseSchema):
+    entry_id: int
     entry_type: Literal['purchase', 'usage']
     coupon_id: int
     coupon_name: str
@@ -694,6 +695,11 @@ class CouponLedgerEntryRead(BaseSchema):
     amount_gold: int
     note: str | None
     created_at: datetime
+
+
+class CouponLedgerCancelRead(BaseSchema):
+    success: bool
+    message: str
 
 
 class FundingProjectCreate(BaseSchema):

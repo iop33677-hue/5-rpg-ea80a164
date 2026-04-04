@@ -47,6 +47,7 @@ from app.schemas import (
     ClassroomCardRecipientRead,
     ClassroomCardUpdate,
     ClassroomOverview,
+    CouponLedgerCancelRead,
     CouponLedgerEntryRead,
     FundingContributionCreate,
     FundingContributionRead,
@@ -3321,7 +3322,7 @@ def update_activity_coupon(
 
 
 @router.delete("/activity-shop/coupons/{coupon_id}")
-def deactivate_activity_coupon(
+def delete_activity_coupon(
     coupon_id: int,
     db: Session = Depends(get_db),
     auth_payload: dict[str, object] = Depends(require_auth),
@@ -3333,7 +3334,25 @@ def deactivate_activity_coupon(
     if not coupon:
         raise HTTPException(status_code=404, detail="쿠폰을 찾을 수 없습니다.")
 
-    coupon.is_active = False
+    linked_purchase_count = (
+        db.query(func.count(ActivityCouponPurchase.id))
+        .filter(ActivityCouponPurchase.coupon_id == coupon.id)
+        .scalar()
+        or 0
+    )
+    linked_usage_count = (
+        db.query(func.count(ActivityCouponUsage.id))
+        .filter(ActivityCouponUsage.coupon_id == coupon.id)
+        .scalar()
+        or 0
+    )
+    if linked_purchase_count > 0 or linked_usage_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="기록이 있는 쿠폰은 삭제할 수 없습니다. 기록 취소 후 다시 시도해 주세요.",
+        )
+
+    db.delete(coupon)
     db.commit()
     return {"success": True}
 
@@ -3363,7 +3382,7 @@ def purchase_activity_coupon(
 
     total_price = coupon.price_gold * payload.quantity
     if student.won_balance < total_price:
-        raise HTTPException(status_code=400, detail="골드가 부족합니다.")
+        raise HTTPException(status_code=400, detail="원이 부족합니다.")
 
     student.won_balance -= total_price
     coupon.stock -= payload.quantity
@@ -3486,8 +3505,11 @@ def get_student_coupon_inventory(
 def get_coupon_ledger(
     coupon_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: dict[str, object] = Depends(require_auth),
+    auth_payload: dict[str, object] = Depends(require_auth),
 ):
+    session_student_id = _student_session_student_id(auth_payload)
+    is_manager = _has_teacher_mode_access(auth_payload)
+
     purchase_query = db.query(ActivityCouponPurchase, ActivityCoupon, Student).join(
         ActivityCoupon, ActivityCoupon.id == ActivityCouponPurchase.coupon_id
     ).join(Student, Student.id == ActivityCouponPurchase.student_id)
@@ -3500,6 +3522,12 @@ def get_coupon_ledger(
         purchase_query = purchase_query.filter(ActivityCouponPurchase.coupon_id == coupon_id)
         usage_query = usage_query.filter(ActivityCouponUsage.coupon_id == coupon_id)
 
+    if not is_manager:
+        if session_student_id is None:
+            raise HTTPException(status_code=403, detail="쿠폰 기록을 볼 수 있는 권한이 없습니다.")
+        purchase_query = purchase_query.filter(ActivityCouponPurchase.student_id == session_student_id)
+        usage_query = usage_query.filter(ActivityCouponUsage.student_id == session_student_id)
+
     purchases = purchase_query.order_by(desc(ActivityCouponPurchase.created_at)).limit(300).all()
     usages = usage_query.order_by(desc(ActivityCouponUsage.created_at)).limit(300).all()
 
@@ -3507,6 +3535,7 @@ def get_coupon_ledger(
     for purchase, coupon, student in purchases:
         entries.append(
             CouponLedgerEntryRead(
+                entry_id=purchase.id,
                 entry_type="purchase",
                 coupon_id=coupon.id,
                 coupon_name=coupon.name,
@@ -3524,6 +3553,7 @@ def get_coupon_ledger(
     for usage, coupon, student in usages:
         entries.append(
             CouponLedgerEntryRead(
+                entry_id=usage.id,
                 entry_type="usage",
                 coupon_id=coupon.id,
                 coupon_name=coupon.name,
@@ -3540,6 +3570,78 @@ def get_coupon_ledger(
 
     entries.sort(key=lambda item: item.created_at, reverse=True)
     return entries[:300]
+
+
+@router.post(
+    "/activity-shop/coupon-ledger/{entry_type}/{entry_id}/cancel",
+    response_model=CouponLedgerCancelRead,
+)
+def cancel_coupon_ledger_entry(
+    entry_type: str,
+    entry_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="구매/사용 취소는 관리자/교사만 가능합니다.")
+
+    normalized_entry_type = entry_type.strip().lower()
+    if normalized_entry_type not in {"purchase", "usage"}:
+        raise HTTPException(status_code=400, detail="취소 타입은 purchase 또는 usage 여야 합니다.")
+
+    if normalized_entry_type == "usage":
+        usage = db.query(ActivityCouponUsage).filter(ActivityCouponUsage.id == entry_id).first()
+        if not usage:
+            raise HTTPException(status_code=404, detail="사용 기록을 찾을 수 없습니다.")
+
+        db.delete(usage)
+        db.commit()
+        return CouponLedgerCancelRead(success=True, message="쿠폰 사용 기록을 취소했습니다.")
+
+    purchase = db.query(ActivityCouponPurchase).filter(ActivityCouponPurchase.id == entry_id).first()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="구매 기록을 찾을 수 없습니다.")
+
+    student = db.query(Student).filter(Student.id == purchase.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생 정보를 찾을 수 없습니다.")
+
+    coupon = db.query(ActivityCoupon).filter(ActivityCoupon.id == purchase.coupon_id).first()
+    if not coupon:
+        raise HTTPException(status_code=404, detail="쿠폰 정보를 찾을 수 없습니다.")
+
+    purchased_quantity = (
+        db.query(func.coalesce(func.sum(ActivityCouponPurchase.quantity), 0))
+        .filter(
+            ActivityCouponPurchase.student_id == purchase.student_id,
+            ActivityCouponPurchase.coupon_id == purchase.coupon_id,
+        )
+        .scalar()
+        or 0
+    )
+    used_quantity = (
+        db.query(func.coalesce(func.sum(ActivityCouponUsage.quantity), 0))
+        .filter(
+            ActivityCouponUsage.student_id == purchase.student_id,
+            ActivityCouponUsage.coupon_id == purchase.coupon_id,
+        )
+        .scalar()
+        or 0
+    )
+    remaining_quantity = int(purchased_quantity) - int(used_quantity)
+
+    if remaining_quantity < purchase.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail="이미 사용된 수량이 포함된 구매 기록은 취소할 수 없습니다.",
+        )
+
+    student.won_balance += purchase.total_price_gold
+    coupon.stock += purchase.quantity
+    db.delete(purchase)
+    db.commit()
+
+    return CouponLedgerCancelRead(success=True, message="쿠폰 구매 기록을 취소했습니다.")
 
 
 @router.get("/activity-shop/funding-projects", response_model=list[FundingProjectRead])
@@ -3645,7 +3747,7 @@ def create_funding_contribution(
         raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
 
     if student.won_balance < payload.amount:
-        raise HTTPException(status_code=400, detail="골드가 부족합니다.")
+        raise HTTPException(status_code=400, detail="원이 부족합니다.")
 
     student.won_balance -= payload.amount
     project.current_amount += payload.amount

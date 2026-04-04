@@ -15,6 +15,7 @@ import {
   Coins,
   Compass,
   Crown,
+  Eye,
   FileSpreadsheet,
   Flame,
   Gift,
@@ -83,6 +84,7 @@ import {
   type ActivityCouponUsage,
   type ActivityCouponUsagePayload,
   type ClassroomOverview,
+  type CouponLedgerCancelResponse,
   type CouponLedgerEntry,
   type FundingContribution,
   type FundingContributionPayload,
@@ -234,7 +236,7 @@ interface StopwatchLap {
   timestamp: number
 }
 
-type ActivityShopTab = 'coupon-store' | 'coupon-buy' | 'coupon-use' | 'funding'
+type ActivityShopTab = 'coupon-store' | 'coupon-record' | 'funding'
 
 interface CouponFormState {
   name: string
@@ -493,7 +495,7 @@ const emptyCardForm = (cardType: 'praise' | 'warning'): CardFormState => ({
   stat_delta: '1',
 })
 
-const couponEmojiPresets = ['🎟️', '🎁', '🍿', '🥤', '📚', '🧩', '🎨', '🎵', '⚽', '🛴'] as const
+const couponEmojiPresets = ['🎟️', '🎁', '🍿', '🥤', '📚', '🧩', '🎨', '🎵', '⚽', '🛴', '🎮', '🍔', '🍕', '🧃', '🎬', '🚌', '📷', '🎯', '🏸', '🧸'] as const
 
 const emptyCouponForm: CouponFormState = {
   name: '',
@@ -654,10 +656,12 @@ function App() {
   const [selectedStudentForActivityShop, setSelectedStudentForActivityShop] = useState<number | null>(null)
   const [couponForm, setCouponForm] = useState<CouponFormState>(emptyCouponForm)
   const [editingCouponId, setEditingCouponId] = useState<number | null>(null)
+  const [showCouponModal, setShowCouponModal] = useState(false)
+  const [couponHistoryCouponId, setCouponHistoryCouponId] = useState<number | null>(null)
+  const [couponPurchaseDrafts, setCouponPurchaseDrafts] = useState<Record<number, string>>({})
   const [couponUseForm, setCouponUseForm] = useState<CouponUseFormState>(emptyCouponUseForm)
   const [fundingForm, setFundingForm] = useState<FundingFormState>(emptyFundingForm)
   const [editingFundingProjectId, setEditingFundingProjectId] = useState<number | null>(null)
-  const [couponPurchaseQuantity, setCouponPurchaseQuantity] = useState('1')
   const [fundingContributionAmount, setFundingContributionAmount] = useState('100')
   const [activityShopMessage, setActivityShopMessage] = useState('')
   const [activityShopLoading, setActivityShopLoading] = useState(false)
@@ -1008,6 +1012,20 @@ function App() {
     return fundingProjects.find((project) => project.id === selectedFundingProjectId) ?? null
   }, [fundingProjects, selectedFundingProjectId])
 
+  const selectedCouponForHistory = useMemo(() => {
+    if (!couponHistoryCouponId) {
+      return null
+    }
+    return activityCoupons.find((coupon) => coupon.id === couponHistoryCouponId) ?? null
+  }, [activityCoupons, couponHistoryCouponId])
+
+  const couponHistoryEntries = useMemo(() => {
+    if (!couponHistoryCouponId) {
+      return []
+    }
+    return couponLedger.filter((entry) => entry.coupon_id === couponHistoryCouponId)
+  }, [couponHistoryCouponId, couponLedger])
+
   const studentDetailExpRate = useMemo(() => {
     if (!studentDetail) {
       return 0
@@ -1229,11 +1247,18 @@ function App() {
   }
 
   const handleOpenCreateCoupon = (): void => {
+    if (!canManageClassContent) {
+      return
+    }
     setEditingCouponId(null)
     setCouponForm(emptyCouponForm)
+    setShowCouponModal(true)
   }
 
   const handleOpenEditCoupon = (coupon: ActivityCoupon): void => {
+    if (!canManageClassContent) {
+      return
+    }
     setEditingCouponId(coupon.id)
     setCouponForm({
       name: coupon.name,
@@ -1243,6 +1268,13 @@ function App() {
       stock: String(coupon.stock),
       is_active: coupon.is_active,
     })
+    setShowCouponModal(true)
+  }
+
+  const closeCouponModal = (): void => {
+    setShowCouponModal(false)
+    setEditingCouponId(null)
+    setCouponForm(emptyCouponForm)
   }
 
   const handleSaveCoupon = async (): Promise<void> => {
@@ -1286,8 +1318,7 @@ function App() {
         setActivityShopMessage('새 쿠폰을 만들었습니다.')
       }
 
-      setCouponForm(emptyCouponForm)
-      setEditingCouponId(null)
+      closeCouponModal()
       await refreshActivityShopData()
     } catch {
       setActivityShopMessage('쿠폰 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.')
@@ -1296,7 +1327,7 @@ function App() {
     }
   }
 
-  const handleDeactivateCoupon = async (couponId: number): Promise<void> => {
+  const handleDeleteCoupon = async (couponId: number): Promise<void> => {
     if (!canManageClassContent) {
       return
     }
@@ -1304,10 +1335,10 @@ function App() {
     setActivityShopLoading(true)
     try {
       await api.delete<{ success: boolean }>(`/classroom/activity-shop/coupons/${couponId}`)
-      setActivityShopMessage('쿠폰을 비활성화했습니다.')
+      setActivityShopMessage('쿠폰을 삭제했습니다.')
       await refreshActivityShopData()
     } catch {
-      setActivityShopMessage('쿠폰 비활성화에 실패했습니다.')
+      setActivityShopMessage('기록이 있는 쿠폰은 삭제할 수 없습니다. 먼저 기록을 취소해 주세요.')
     } finally {
       setActivityShopLoading(false)
     }
@@ -1319,7 +1350,8 @@ function App() {
       return
     }
 
-    const quantity = Number(couponPurchaseQuantity)
+    const quantityDraft = couponPurchaseDrafts[coupon.id] ?? '1'
+    const quantity = Number(quantityDraft)
     if (!Number.isFinite(quantity) || quantity <= 0) {
       setActivityShopMessage('구매 수량을 올바르게 입력해 주세요.')
       return
@@ -1337,7 +1369,7 @@ function App() {
       setActivityShopMessage(`${coupon.name} 쿠폰을 구매했습니다.`)
       await refreshActivityShopData()
     } catch {
-      setActivityShopMessage('쿠폰 구매에 실패했습니다. 골드/재고를 확인해 주세요.')
+      setActivityShopMessage('쿠폰 구매에 실패했습니다. 원/재고를 확인해 주세요.')
     } finally {
       setActivityShopLoading(false)
     }
@@ -1371,6 +1403,26 @@ function App() {
       await refreshActivityShopData()
     } catch {
       setActivityShopMessage('쿠폰 사용 처리에 실패했습니다.')
+    } finally {
+      setActivityShopLoading(false)
+    }
+  }
+
+  const handleCancelCouponLedgerEntry = async (entry: CouponLedgerEntry): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    setActivityShopLoading(true)
+    try {
+      const response = await api.post<CouponLedgerCancelResponse>(
+        `/classroom/activity-shop/coupon-ledger/${entry.entry_type}/${entry.entry_id}/cancel`,
+        {},
+      )
+      setActivityShopMessage(response.message)
+      await refreshActivityShopData()
+    } catch {
+      setActivityShopMessage('기록 취소에 실패했습니다. 이미 사용된 구매 기록인지 확인해 주세요.')
     } finally {
       setActivityShopLoading(false)
     }
@@ -1551,7 +1603,7 @@ function App() {
     }
 
     void loadCouponInventory()
-  }, [authUser, selectedStudentForActivityShop, activityCoupons.length])
+  }, [authUser, selectedStudentForActivityShop, activityCoupons.length, couponLedger.length])
 
   useEffect(() => {
     if (!authUser || !selectedFundingProjectId) {
@@ -4337,7 +4389,7 @@ function App() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <h3 className="font-heading text-2xl font-semibold text-slate-900">학급 활동 상점</h3>
-                        <p className="text-sm text-slate-600">쿠폰 상점 · 구매 · 사용 · 펀딩 프로젝트를 한 탭에서 관리합니다.</p>
+                        <p className="text-sm text-slate-600">쿠폰 상점 · 쿠폰 기록 · 펀딩 프로젝트를 한 탭에서 관리합니다.</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <select
@@ -4352,16 +4404,15 @@ function App() {
                           ))}
                         </select>
                         <div className="rounded-xl border border-[#c9d9ef] bg-white px-3 py-2 text-sm font-semibold text-[#1e3a8a]">
-                          보유 골드 {selectedActivityStudent?.won_balance ?? 0}G
+                          보유 원 {(selectedActivityStudent?.won_balance ?? 0).toLocaleString()}원
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       {[
                         { key: 'coupon-store', label: '쿠폰 상점' },
-                        { key: 'coupon-buy', label: '쿠폰 구매하기' },
-                        { key: 'coupon-use', label: '쿠폰 사용하기' },
+                        { key: 'coupon-record', label: '쿠폰 기록' },
                         { key: 'funding', label: '펀딩 프로젝트 관리' },
                       ].map((tab) => (
                         <button
@@ -4385,33 +4436,14 @@ function App() {
                   {activityShopTab === 'coupon-store' ? (
                     <div className="space-y-4">
                       {canManageClassContent ? (
-                        <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                            <h4 className="text-lg font-semibold text-[#153a63]">{editingCouponId ? '쿠폰 수정' : '새 쿠폰 만들기'}</h4>
-                            <button type="button" onClick={handleOpenCreateCoupon} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">
-                              새 폼
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="쿠폰 이름" value={couponForm.name} onChange={(event) => setCouponForm((prev) => ({ ...prev, name: event.target.value }))} />
-                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="가격(골드)" value={couponForm.price_gold} onChange={(event) => setCouponForm((prev) => ({ ...prev, price_gold: event.target.value }))} />
-                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" placeholder="재고" value={couponForm.stock} onChange={(event) => setCouponForm((prev) => ({ ...prev, stock: event.target.value }))} />
-                            <select className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponForm.icon_emoji} onChange={(event) => setCouponForm((prev) => ({ ...prev, icon_emoji: event.target.value }))}>
-                              {couponEmojiPresets.map((emoji) => (
-                                <option key={emoji} value={emoji}>{emoji}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <textarea className="mt-2 min-h-[84px] w-full rounded-lg border border-[#c9d9f0] px-3 py-2 text-sm" placeholder="쿠폰 설명" value={couponForm.description} onChange={(event) => setCouponForm((prev) => ({ ...prev, description: event.target.value }))} />
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                            <label className="flex items-center gap-2 text-sm text-[#35597f]">
-                              <input type="checkbox" checked={couponForm.is_active} onChange={(event) => setCouponForm((prev) => ({ ...prev, is_active: event.target.checked }))} />
-                              판매 활성화
-                            </label>
-                            <button type="button" onClick={() => void handleSaveCoupon()} disabled={activityShopLoading} className="h-10 cursor-pointer rounded-lg bg-[#10b981] px-4 text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">
-                              {editingCouponId ? '쿠폰 수정 저장' : '쿠폰 생성'}
-                            </button>
-                          </div>
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleOpenCreateCoupon}
+                            className="h-11 cursor-pointer rounded-xl bg-[#2563eb] px-4 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                          >
+                            만들기
+                          </button>
                         </div>
                       ) : null}
 
@@ -4424,59 +4456,75 @@ function App() {
                                 <h5 className="mt-1 text-lg font-semibold text-[#153a63]">{coupon.name}</h5>
                               </div>
                               <div className="text-right">
-                                <p className="text-xl font-bold text-[#d97706]">{coupon.price_gold}</p>
-                                <p className="text-xs font-semibold text-[#d97706]">GOLD</p>
+                                <p className="text-xl font-bold text-[#d97706]">{coupon.price_gold.toLocaleString()}</p>
+                                <p className="text-xs font-semibold text-[#d97706]">원</p>
                               </div>
                             </div>
                             <p className="mt-2 min-h-[40px] text-sm text-[#5c7594]">{coupon.description || '설명이 등록되지 않았습니다.'}</p>
                             <div className="mt-3 flex items-center justify-between text-xs text-[#456792]">
-                              <span className={`rounded-full px-2 py-1 ${coupon.is_active ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#b91c1c]'}`}>{coupon.is_active ? '판매중' : '비활성'}</span>
+                              <span className={`rounded-full px-2 py-1 ${coupon.is_active ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#b91c1c]'}`}>{coupon.is_active ? '판매중' : '판매 종료'}</span>
                               <span>재고 {coupon.stock}개</span>
                             </div>
-                            {canManageClassContent ? (
-                              <div className="mt-3 flex items-center gap-2">
-                                <button type="button" onClick={() => handleOpenEditCoupon(coupon)} className="h-9 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-xs text-[#21446f] hover:bg-[#eef5ff]">수정</button>
-                                <button type="button" onClick={() => void handleDeactivateCoupon(coupon.id)} className="h-9 cursor-pointer rounded-lg border border-[#e1cad1] bg-white px-3 text-xs text-[#a43b4f] hover:bg-[#fff4f6]">비활성화</button>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
 
-                  {activityShopTab === 'coupon-buy' ? (
-                    <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm text-[#4a678a]">구매 수량</p>
-                        <input className="h-10 w-24 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponPurchaseQuantity} onChange={(event) => setCouponPurchaseQuantity(event.target.value)} />
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {activityCoupons.filter((coupon) => coupon.is_active).map((coupon) => (
-                          <div key={coupon.id} className="rounded-2xl border border-[#d8e4f2] bg-[#f8fbff] p-4">
-                            <div className="flex items-center justify-between">
-                              <p className="text-base font-semibold text-[#153a63]">{coupon.icon_emoji} {coupon.name}</p>
-                              <p className="text-sm font-bold text-[#d97706]">{coupon.price_gold}G</p>
+                            <div className="mt-3 flex items-center gap-2">
+                              <input
+                                className="h-10 w-20 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                                value={couponPurchaseDrafts[coupon.id] ?? '1'}
+                                onChange={(event) =>
+                                  setCouponPurchaseDrafts((prev) => ({
+                                    ...prev,
+                                    [coupon.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="수량"
+                              />
+                              <button
+                                type="button"
+                                disabled={activityShopLoading || !coupon.is_active || coupon.stock <= 0}
+                                onClick={() => void handlePurchaseCoupon(coupon)}
+                                className="h-10 flex-1 cursor-pointer rounded-lg bg-[#2563eb] text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                구매하기
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCouponHistoryCouponId(coupon.id)}
+                                className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d4e2f3] bg-[#f8fbff] text-[#355a86] hover:bg-[#eef5ff]"
+                                aria-label="쿠폰 기록 보기"
+                              >
+                                <Eye className="size-4" />
+                              </button>
+                              {canManageClassContent ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditCoupon(coupon)}
+                                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d4e2f3] bg-[#f8fbff] text-[#355a86] hover:bg-[#eef5ff]"
+                                    aria-label="쿠폰 수정"
+                                  >
+                                    <Pencil className="size-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteCoupon(coupon.id)}
+                                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#e8cfd8] bg-white text-[#b44a61] hover:bg-[#fff3f6]"
+                                    aria-label="쿠폰 삭제"
+                                  >
+                                    <Trash2 className="size-4" />
+                                  </button>
+                                </>
+                              ) : null}
                             </div>
-                            <p className="mt-1 text-xs text-[#5c7594]">재고 {coupon.stock}개</p>
-                            <button
-                              type="button"
-                              disabled={activityShopLoading || coupon.stock <= 0}
-                              onClick={() => void handlePurchaseCoupon(coupon)}
-                              className="mt-3 h-10 w-full cursor-pointer rounded-lg bg-[#2563eb] text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              구매하기
-                            </button>
                           </div>
                         ))}
                       </div>
                     </div>
                   ) : null}
 
-                  {activityShopTab === 'coupon-use' ? (
+                  {activityShopTab === 'coupon-record' ? (
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <div className="space-y-4 rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 사용하기</h4>
+                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 기록 탭</h4>
                         <select className="h-11 w-full rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.coupon_id} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, coupon_id: event.target.value }))}>
                           <option value="">사용할 쿠폰 선택</option>
                           {couponInventory.filter((row) => row.remaining_quantity > 0).map((row) => (
@@ -4487,7 +4535,7 @@ function App() {
                           <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.quantity} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, quantity: event.target.value }))} placeholder="수량" />
                           <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={couponUseForm.note} onChange={(event) => setCouponUseForm((prev) => ({ ...prev, note: event.target.value }))} placeholder="사용 메모" />
                         </div>
-                        <button type="button" onClick={() => void handleUseCoupon()} disabled={activityShopLoading} className="h-10 w-full cursor-pointer rounded-lg bg-[#10b981] text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">쿠폰 사용 기록</button>
+                        <button type="button" onClick={() => void handleUseCoupon()} disabled={activityShopLoading} className="h-10 w-full cursor-pointer rounded-lg bg-[#10b981] text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">쿠폰 사용 기록 추가</button>
 
                         <div className="rounded-xl border border-[#dbe6f3] bg-[#f8fbff] p-3">
                           <p className="text-sm font-semibold text-[#1e3a8a]">내 쿠폰 보유 현황</p>
@@ -4500,18 +4548,29 @@ function App() {
                       </div>
 
                       <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 로그</h4>
+                        <h4 className="text-lg font-semibold text-[#153a63]">쿠폰 구매/사용 기록</h4>
                         <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                          {couponLedger.slice(0, 120).map((entry, index) => (
-                            <div key={`${entry.entry_type}-${entry.coupon_id}-${entry.student_id}-${entry.created_at}-${index}`} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
+                          {couponLedger.slice(0, 120).map((entry) => (
+                            <div key={`${entry.entry_type}-${entry.entry_id}`} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-[#1f3f66]">{entry.icon_emoji} {entry.coupon_name}</p>
                                 <span className={`rounded-full px-2 py-0.5 text-xs ${entry.entry_type === 'purchase' ? 'bg-[#dbeafe] text-[#1d4ed8]' : 'bg-[#dcfce7] text-[#166534]'}`}>
                                   {entry.entry_type === 'purchase' ? '구매' : '사용'}
                                 </span>
                               </div>
-                              <p className="mt-1 text-xs text-[#5f7897]">{entry.student_number}번 {entry.student_name} · 수량 {entry.quantity}{entry.entry_type === 'purchase' ? ` · ${entry.amount_gold}G` : ''}</p>
+                              <p className="mt-1 text-xs text-[#5f7897]">{entry.student_number}번 {entry.student_name} · 수량 {entry.quantity}{entry.entry_type === 'purchase' ? ` · ${entry.amount_gold.toLocaleString()}원` : ''}</p>
                               <p className="text-xs text-[#7890ac]">{new Date(entry.created_at).toLocaleString('ko-KR')}{entry.note ? ` · ${entry.note}` : ''}</p>
+                              {canManageClassContent ? (
+                                <div className="mt-2 flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleCancelCouponLedgerEntry(entry)}
+                                    className="h-8 cursor-pointer rounded-md border border-[#e3c7cf] bg-white px-2 text-xs font-semibold text-[#a43b4f] hover:bg-[#fff4f6]"
+                                  >
+                                    취소
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -4948,6 +5007,135 @@ function App() {
               </div>
             </section>
           </div>
+
+          {showCouponModal ? (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#05101dd4] p-4">
+              <div className="modal-enter w-full max-w-3xl rounded-2xl border border-[#c8d9ec] bg-white p-5 shadow-[0_24px_50px_rgba(10,37,70,0.26)]">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="font-heading text-xl font-semibold text-[#143760]">{editingCouponId ? '쿠폰 수정' : '쿠폰 만들기'}</h3>
+                  <button
+                    type="button"
+                    aria-label="닫기"
+                    onClick={closeCouponModal}
+                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d2deed] text-[#375b81] transition-colors duration-[200ms] hover:bg-[#eef5ff]"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-[#4f6784]">
+                    쿠폰명 *
+                    <input
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={couponForm.name}
+                      onChange={(event) => setCouponForm((prev) => ({ ...prev, name: event.target.value }))}
+                      placeholder="예: 밀크츄"
+                    />
+                  </label>
+                  <label className="text-xs text-[#4f6784]">
+                    가격(원)
+                    <input
+                      type="number"
+                      min={1}
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={couponForm.price_gold}
+                      onChange={(event) => setCouponForm((prev) => ({ ...prev, price_gold: event.target.value }))}
+                    />
+                  </label>
+                  <label className="text-xs text-[#4f6784]">
+                    재고
+                    <input
+                      type="number"
+                      min={0}
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={couponForm.stock}
+                      onChange={(event) => setCouponForm((prev) => ({ ...prev, stock: event.target.value }))}
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 rounded-xl border border-[#d2deed] bg-[#f8fbff] px-3 py-2 text-sm text-[#304f72] sm:mt-6">
+                    <input
+                      type="checkbox"
+                      checked={couponForm.is_active}
+                      onChange={(event) => setCouponForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                    />
+                    판매 활성화
+                  </label>
+                </div>
+
+                <label className="mt-3 block text-xs text-[#4f6784]">
+                  쿠폰 설명
+                  <textarea
+                    className="mt-1 min-h-20 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 py-2 text-sm text-[#193654]"
+                    value={couponForm.description}
+                    onChange={(event) => setCouponForm((prev) => ({ ...prev, description: event.target.value }))}
+                  />
+                </label>
+
+                <div className="mt-3">
+                  <p className="mb-2 text-xs text-[#4f6784]">쿠폰 아이콘 선택</p>
+                  <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+                    {couponEmojiPresets.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setCouponForm((prev) => ({ ...prev, icon_emoji: emoji }))}
+                        className={`flex h-10 cursor-pointer items-center justify-center rounded-lg border text-lg ${couponForm.icon_emoji === emoji ? 'border-[#6a9bd5] bg-[#eaf3ff]' : 'border-[#d5e1ef] bg-white hover:bg-[#f1f7ff]'}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button variant="outline" className="h-10 cursor-pointer" onClick={closeCouponModal}>취소</Button>
+                  <Button className="h-10 cursor-pointer" onClick={() => void handleSaveCoupon()} disabled={activityShopLoading}>
+                    {activityShopLoading ? '저장 중...' : editingCouponId ? '수정 완료' : '쿠폰 만들기'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {couponHistoryCouponId ? (
+            <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#03070dcc] p-4">
+              <div className="modal-enter w-full max-w-3xl rounded-2xl border border-[#c8d9ec] bg-white p-5 shadow-[0_24px_50px_rgba(10,37,70,0.26)]">
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading text-xl font-semibold text-[#143760]">구매자 목록</h3>
+                    <p className="text-sm text-[#5c7594]">{selectedCouponForHistory ? `${selectedCouponForHistory.icon_emoji} ${selectedCouponForHistory.name}` : '쿠폰 기록'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="닫기"
+                    onClick={() => setCouponHistoryCouponId(null)}
+                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d2deed] text-[#375b81] transition-colors duration-[200ms] hover:bg-[#eef5ff]"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <p className="text-sm font-semibold text-[#21446f]">총 {couponHistoryEntries.length}개의 기록이 있습니다.</p>
+                <div className="mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
+                  {couponHistoryEntries.length > 0 ? couponHistoryEntries.slice(0, 100).map((entry) => (
+                    <div key={`${entry.entry_type}-${entry.entry_id}`} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-[#1f3f66]">{entry.student_number}번 {entry.student_name}</p>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${entry.entry_type === 'purchase' ? 'bg-[#dbeafe] text-[#1d4ed8]' : 'bg-[#dcfce7] text-[#166534]'}`}>
+                          {entry.entry_type === 'purchase' ? '구매 완료' : '사용 완료'}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-[#5f7897]">
+                        {entry.entry_type === 'purchase' ? `구매일: ${new Date(entry.created_at).toLocaleString('ko-KR')} · ${entry.amount_gold.toLocaleString()}원` : `사용일: ${new Date(entry.created_at).toLocaleString('ko-KR')}`}
+                      </p>
+                      {entry.note ? <p className="text-xs text-[#7890ac]">메모: {entry.note}</p> : null}
+                    </div>
+                  )) : <p className="text-sm text-[#7890ac]">아직 기록이 없습니다.</p>}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {showMissionModal ? (
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#05101dd4] p-4">
