@@ -18,6 +18,10 @@ from app.models import (
     CardEvent,
     FundingContribution,
     FundingProject,
+    LearningBoard,
+    LearningBoardComment,
+    LearningBoardLike,
+    LearningBoardPost,
     QuestionBankItem,
     QuestionFile,
     RaidActionLog,
@@ -52,6 +56,16 @@ from app.schemas import (
     FundingContributionCreate,
     FundingContributionRead,
     FundingProjectCreate,
+    LearningBoardCommentCreate,
+    LearningBoardCommentRead,
+    LearningBoardCommentUpdate,
+    LearningBoardCreate,
+    LearningBoardLikeToggleRead,
+    LearningBoardPostCreate,
+    LearningBoardPostRead,
+    LearningBoardPostUpdate,
+    LearningBoardRead,
+    LearningBoardUpdate,
     FundingProjectDetailRead,
     FundingProjectRead,
     FundingProjectUpdate,
@@ -3749,6 +3763,17 @@ def create_funding_contribution(
     if student.won_balance < payload.amount:
         raise HTTPException(status_code=400, detail="원이 부족합니다.")
 
+    remaining_amount = project.target_amount - project.current_amount
+    if remaining_amount <= 0:
+        project.status = "completed"
+        if project.completed_at is None:
+            project.completed_at = datetime.now(UTC)
+        db.commit()
+        raise HTTPException(status_code=400, detail="이미 목표 금액을 달성한 프로젝트입니다.")
+
+    if payload.amount > remaining_amount:
+        raise HTTPException(status_code=400, detail=f"남은 모집 금액은 {remaining_amount:,}원입니다.")
+
     student.won_balance -= payload.amount
     project.current_amount += payload.amount
 
@@ -3812,6 +3837,474 @@ def get_funding_project_detail(
         project=_build_funding_project_read(project, db),
         contributions=contributions,
     )
+
+
+def _build_learning_board_read(board: LearningBoard, db: Session) -> LearningBoardRead:
+    post_count = (
+        db.query(func.count(LearningBoardPost.id))
+        .filter(LearningBoardPost.board_id == board.id)
+        .scalar()
+        or 0
+    )
+    return LearningBoardRead(
+        id=board.id,
+        title=board.title,
+        description=board.description,
+        cover_image_url=board.cover_image_url,
+        is_active=board.is_active,
+        post_count=int(post_count),
+        created_at=board.created_at,
+        updated_at=board.updated_at,
+    )
+
+
+def _build_learning_board_comment_read(
+    comment: LearningBoardComment,
+    student: Student,
+) -> LearningBoardCommentRead:
+    return LearningBoardCommentRead(
+        id=comment.id,
+        post_id=comment.post_id,
+        student_id=student.id,
+        student_number=student.student_number,
+        student_name=student.name,
+        content=comment.content,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
+
+
+def _can_manage_learning_board_post(auth_payload: dict[str, object], post_student_id: int) -> bool:
+    if _has_teacher_mode_access(auth_payload):
+        return True
+
+    student_id = _student_session_student_id(auth_payload)
+    return student_id == post_student_id
+
+
+@router.get("/learning-boards", response_model=list[LearningBoardRead])
+def list_learning_boards(
+    include_inactive: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    query = db.query(LearningBoard)
+
+    if not include_inactive or not _has_teacher_mode_access(auth_payload):
+        query = query.filter(LearningBoard.is_active.is_(True))
+
+    boards = query.order_by(asc(LearningBoard.id)).all()
+    return [_build_learning_board_read(board, db) for board in boards]
+
+
+@router.post("/learning-boards", response_model=LearningBoardRead)
+def create_learning_board(
+    payload: LearningBoardCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="게시판은 교사/관리자만 생성할 수 있습니다.")
+
+    board = LearningBoard(
+        title=payload.title,
+        description=payload.description,
+        cover_image_url=payload.cover_image_url,
+        is_active=payload.is_active,
+        created_by_user_id=_current_user_id(auth_payload),
+    )
+    db.add(board)
+    db.commit()
+    db.refresh(board)
+    return _build_learning_board_read(board, db)
+
+
+@router.patch("/learning-boards/{board_id}", response_model=LearningBoardRead)
+def update_learning_board(
+    board_id: int,
+    payload: LearningBoardUpdate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="게시판은 교사/관리자만 수정할 수 있습니다.")
+
+    board = db.query(LearningBoard).filter(LearningBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="게시판을 찾을 수 없습니다.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        setattr(board, key, value)
+
+    db.commit()
+    db.refresh(board)
+    return _build_learning_board_read(board, db)
+
+
+@router.delete("/learning-boards/{board_id}")
+def delete_learning_board(
+    board_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    if not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="게시판은 교사/관리자만 삭제할 수 있습니다.")
+
+    board = db.query(LearningBoard).filter(LearningBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="게시판을 찾을 수 없습니다.")
+
+    db.delete(board)
+    db.commit()
+    return {"success": True}
+
+
+@router.get("/learning-boards/{board_id}/posts", response_model=list[LearningBoardPostRead])
+def list_learning_board_posts(
+    board_id: int,
+    sort: str = Query(default="number"),
+    viewer_student_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    board = db.query(LearningBoard).filter(LearningBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="게시판을 찾을 수 없습니다.")
+
+    if not board.is_active and not _has_teacher_mode_access(auth_payload):
+        raise HTTPException(status_code=403, detail="비활성화된 게시판입니다.")
+
+    if viewer_student_id is not None:
+        _require_student_self_or_teacher(auth_payload, viewer_student_id)
+
+    session_student_id = _student_session_student_id(auth_payload)
+    effective_student_id = session_student_id if session_student_id is not None else viewer_student_id
+
+    rows = (
+        db.query(LearningBoardPost, Student)
+        .join(Student, Student.id == LearningBoardPost.student_id)
+        .filter(LearningBoardPost.board_id == board.id)
+        .all()
+    )
+
+    like_count_map: dict[int, int] = {
+        int(post_id): int(total)
+        for post_id, total in (
+            db.query(LearningBoardLike.post_id, func.count(LearningBoardLike.id))
+            .join(LearningBoardPost, LearningBoardPost.id == LearningBoardLike.post_id)
+            .filter(LearningBoardPost.board_id == board.id)
+            .group_by(LearningBoardLike.post_id)
+            .all()
+        )
+    }
+
+    comment_count_map: dict[int, int] = {
+        int(post_id): int(total)
+        for post_id, total in (
+            db.query(LearningBoardComment.post_id, func.count(LearningBoardComment.id))
+            .join(LearningBoardPost, LearningBoardPost.id == LearningBoardComment.post_id)
+            .filter(LearningBoardPost.board_id == board.id)
+            .group_by(LearningBoardComment.post_id)
+            .all()
+        )
+    }
+
+    liked_post_ids: set[int] = set()
+    if effective_student_id is not None:
+        liked_post_ids = {
+            int(post_id)
+            for (post_id,) in (
+                db.query(LearningBoardLike.post_id)
+                .join(LearningBoardPost, LearningBoardPost.id == LearningBoardLike.post_id)
+                .filter(
+                    LearningBoardPost.board_id == board.id,
+                    LearningBoardLike.student_id == effective_student_id,
+                )
+                .all()
+            )
+        }
+
+    comments_rows = (
+        db.query(LearningBoardComment, Student)
+        .join(Student, Student.id == LearningBoardComment.student_id)
+        .join(LearningBoardPost, LearningBoardPost.id == LearningBoardComment.post_id)
+        .filter(LearningBoardPost.board_id == board.id)
+        .order_by(desc(LearningBoardComment.created_at))
+        .all()
+    )
+
+    comments_by_post: dict[int, list[LearningBoardCommentRead]] = {}
+    for comment, student in comments_rows:
+        comments_by_post.setdefault(comment.post_id, []).append(
+            _build_learning_board_comment_read(comment, student)
+        )
+
+    post_reads = [
+        LearningBoardPostRead(
+            id=post.id,
+            board_id=post.board_id,
+            student_id=student.id,
+            student_number=student.student_number,
+            student_name=student.name,
+            content=post.content,
+            image_url=post.image_url,
+            like_count=like_count_map.get(post.id, 0),
+            comment_count=comment_count_map.get(post.id, 0),
+            liked_by_me=post.id in liked_post_ids,
+            created_at=post.created_at,
+            updated_at=post.updated_at,
+            comments=comments_by_post.get(post.id, [])[:5],
+        )
+        for post, student in rows
+    ]
+
+    if sort == "likes":
+        post_reads.sort(key=lambda item: (-item.like_count, item.student_number, item.id))
+    elif sort == "latest":
+        post_reads.sort(key=lambda item: item.created_at, reverse=True)
+    else:
+        post_reads.sort(key=lambda item: (item.student_number, item.id))
+
+    return post_reads
+
+
+@router.post("/learning-boards/{board_id}/posts", response_model=LearningBoardPostRead)
+def create_learning_board_post(
+    board_id: int,
+    payload: LearningBoardPostCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, payload.student_id)
+
+    board = db.query(LearningBoard).filter(LearningBoard.id == board_id).first()
+    if not board:
+        raise HTTPException(status_code=404, detail="게시판을 찾을 수 없습니다.")
+
+    if not board.is_active:
+        raise HTTPException(status_code=400, detail="닫힌 게시판에는 글을 작성할 수 없습니다.")
+
+    student = db.query(Student).filter(Student.id == payload.student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    post = LearningBoardPost(
+        board_id=board.id,
+        student_id=student.id,
+        content=payload.content,
+        image_url=payload.image_url,
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return LearningBoardPostRead(
+        id=post.id,
+        board_id=post.board_id,
+        student_id=student.id,
+        student_number=student.student_number,
+        student_name=student.name,
+        content=post.content,
+        image_url=post.image_url,
+        like_count=0,
+        comment_count=0,
+        liked_by_me=False,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+        comments=[],
+    )
+
+
+@router.patch("/learning-boards/posts/{post_id}", response_model=LearningBoardPostRead)
+def update_learning_board_post(
+    post_id: int,
+    payload: LearningBoardPostUpdate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    post = db.query(LearningBoardPost).filter(LearningBoardPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+
+    if not _can_manage_learning_board_post(auth_payload, post.student_id):
+        raise HTTPException(status_code=403, detail="게시글 수정 권한이 없습니다.")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="수정할 내용이 없습니다.")
+
+    for key, value in updates.items():
+        setattr(post, key, value)
+
+    student = db.query(Student).filter(Student.id == post.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    like_count = (
+        db.query(func.count(LearningBoardLike.id))
+        .filter(LearningBoardLike.post_id == post.id)
+        .scalar()
+        or 0
+    )
+    comment_rows = (
+        db.query(LearningBoardComment, Student)
+        .join(Student, Student.id == LearningBoardComment.student_id)
+        .filter(LearningBoardComment.post_id == post.id)
+        .order_by(desc(LearningBoardComment.created_at))
+        .all()
+    )
+
+    db.commit()
+    db.refresh(post)
+
+    return LearningBoardPostRead(
+        id=post.id,
+        board_id=post.board_id,
+        student_id=student.id,
+        student_number=student.student_number,
+        student_name=student.name,
+        content=post.content,
+        image_url=post.image_url,
+        like_count=int(like_count),
+        comment_count=len(comment_rows),
+        liked_by_me=False,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+        comments=[_build_learning_board_comment_read(comment, comment_student) for comment, comment_student in comment_rows][:5],
+    )
+
+
+@router.delete("/learning-boards/posts/{post_id}")
+def delete_learning_board_post(
+    post_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    post = db.query(LearningBoardPost).filter(LearningBoardPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+
+    if not _can_manage_learning_board_post(auth_payload, post.student_id):
+        raise HTTPException(status_code=403, detail="게시글 삭제 권한이 없습니다.")
+
+    db.delete(post)
+    db.commit()
+    return {"success": True}
+
+
+@router.post("/learning-boards/posts/{post_id}/likes", response_model=LearningBoardLikeToggleRead)
+def toggle_learning_board_like(
+    post_id: int,
+    student_id: int = Query(...),
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
+
+    post = db.query(LearningBoardPost).filter(LearningBoardPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+
+    student = db.query(Student).filter(Student.id == student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    existing = (
+        db.query(LearningBoardLike)
+        .filter(LearningBoardLike.post_id == post.id, LearningBoardLike.student_id == student.id)
+        .first()
+    )
+
+    liked = True
+    if existing:
+        db.delete(existing)
+        liked = False
+    else:
+        db.add(LearningBoardLike(post_id=post.id, student_id=student.id))
+
+    db.commit()
+
+    like_count = (
+        db.query(func.count(LearningBoardLike.id))
+        .filter(LearningBoardLike.post_id == post.id)
+        .scalar()
+        or 0
+    )
+
+    return LearningBoardLikeToggleRead(liked=liked, like_count=int(like_count))
+
+
+@router.post("/learning-boards/posts/{post_id}/comments", response_model=LearningBoardCommentRead)
+def create_learning_board_comment(
+    post_id: int,
+    payload: LearningBoardCommentCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, payload.student_id)
+
+    post = db.query(LearningBoardPost).filter(LearningBoardPost.id == post_id).first()
+    if not post:
+        raise HTTPException(status_code=404, detail="게시글을 찾을 수 없습니다.")
+
+    student = db.query(Student).filter(Student.id == payload.student_id, Student.is_active.is_(True)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    comment = LearningBoardComment(
+        post_id=post.id,
+        student_id=student.id,
+        content=payload.content,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+
+    return _build_learning_board_comment_read(comment, student)
+
+
+@router.patch("/learning-boards/comments/{comment_id}", response_model=LearningBoardCommentRead)
+def update_learning_board_comment(
+    comment_id: int,
+    payload: LearningBoardCommentUpdate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    comment = db.query(LearningBoardComment).filter(LearningBoardComment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
+
+    if not _can_manage_learning_board_post(auth_payload, comment.student_id):
+        raise HTTPException(status_code=403, detail="댓글 수정 권한이 없습니다.")
+
+    student = db.query(Student).filter(Student.id == comment.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="학생을 찾을 수 없습니다.")
+
+    comment.content = payload.content
+    db.commit()
+    db.refresh(comment)
+
+    return _build_learning_board_comment_read(comment, student)
+
+
+@router.delete("/learning-boards/comments/{comment_id}")
+def delete_learning_board_comment(
+    comment_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    comment = db.query(LearningBoardComment).filter(LearningBoardComment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
+
+    if not _can_manage_learning_board_post(auth_payload, comment.student_id):
+        raise HTTPException(status_code=403, detail="댓글 삭제 권한이 없습니다.")
+
+    db.delete(comment)
+    db.commit()
+    return {"success": True}
 
 
 @router.post("/question-files", response_model=QuestionFileRead)

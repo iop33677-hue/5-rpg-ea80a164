@@ -702,6 +702,83 @@ class CouponLedgerCancelRead(BaseSchema):
     message: str
 
 
+class LearningBoardCreate(BaseSchema):
+    title: str = Field(min_length=2, max_length=140)
+    description: str | None = Field(default=None, max_length=1200)
+    cover_image_url: str | None = Field(default=None, max_length=600)
+    is_active: bool = True
+
+
+class LearningBoardUpdate(BaseSchema):
+    title: str | None = Field(default=None, min_length=2, max_length=140)
+    description: str | None = Field(default=None, max_length=1200)
+    cover_image_url: str | None = Field(default=None, max_length=600)
+    is_active: bool | None = None
+
+
+class LearningBoardRead(BaseSchema):
+    id: int
+    title: str
+    description: str | None
+    cover_image_url: str | None
+    is_active: bool
+    post_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class LearningBoardPostCreate(BaseSchema):
+    student_id: int
+    content: str = Field(min_length=1, max_length=3000)
+    image_url: str | None = Field(default=None, max_length=600)
+
+
+class LearningBoardPostUpdate(BaseSchema):
+    content: str | None = Field(default=None, min_length=1, max_length=3000)
+    image_url: str | None = Field(default=None, max_length=600)
+
+
+class LearningBoardCommentCreate(BaseSchema):
+    student_id: int
+    content: str = Field(min_length=1, max_length=600)
+
+
+class LearningBoardCommentUpdate(BaseSchema):
+    content: str = Field(min_length=1, max_length=600)
+
+
+class LearningBoardCommentRead(BaseSchema):
+    id: int
+    post_id: int
+    student_id: int
+    student_number: int
+    student_name: str
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class LearningBoardPostRead(BaseSchema):
+    id: int
+    board_id: int
+    student_id: int
+    student_number: int
+    student_name: str
+    content: str
+    image_url: str | None
+    like_count: int
+    comment_count: int
+    liked_by_me: bool
+    created_at: datetime
+    updated_at: datetime
+    comments: list[LearningBoardCommentRead]
+
+
+class LearningBoardLikeToggleRead(BaseSchema):
+    liked: bool
+    like_count: int
+
+
 class FundingProjectCreate(BaseSchema):
     title: str = Field(min_length=2, max_length=140)
     description: str | None = Field(default=None, max_length=1200)

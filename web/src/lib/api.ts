@@ -263,6 +263,83 @@ export interface CouponLedgerCancelResponse {
   message: string
 }
 
+export interface LearningBoard {
+  id: number
+  title: string
+  description: string | null
+  cover_image_url: string | null
+  is_active: boolean
+  post_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface LearningBoardCreatePayload {
+  title: string
+  description?: string | null
+  cover_image_url?: string | null
+  is_active?: boolean
+}
+
+export interface LearningBoardUpdatePayload {
+  title?: string
+  description?: string | null
+  cover_image_url?: string | null
+  is_active?: boolean
+}
+
+export interface LearningBoardPost {
+  id: number
+  board_id: number
+  student_id: number
+  student_number: number
+  student_name: string
+  content: string
+  image_url: string | null
+  like_count: number
+  comment_count: number
+  liked_by_me: boolean
+  created_at: string
+  updated_at: string
+  comments: LearningBoardComment[]
+}
+
+export interface LearningBoardPostCreatePayload {
+  student_id: number
+  content: string
+  image_url?: string | null
+}
+
+export interface LearningBoardPostUpdatePayload {
+  content?: string
+  image_url?: string | null
+}
+
+export interface LearningBoardComment {
+  id: number
+  post_id: number
+  student_id: number
+  student_number: number
+  student_name: string
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export interface LearningBoardCommentCreatePayload {
+  student_id: number
+  content: string
+}
+
+export interface LearningBoardCommentUpdatePayload {
+  content: string
+}
+
+export interface LearningBoardLikeToggleResponse {
+  liked: boolean
+  like_count: number
+}
+
 export interface FundingProject {
   id: number
   title: string

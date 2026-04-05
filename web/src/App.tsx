@@ -92,6 +92,15 @@ import {
   type FundingProjectCreatePayload,
   type FundingProjectDetail,
   type FundingProjectUpdatePayload,
+  type LearningBoard,
+  type LearningBoardComment,
+  type LearningBoardCommentCreatePayload,
+  type LearningBoardLikeToggleResponse,
+  type LearningBoardPost,
+  type LearningBoardPostCreatePayload,
+  type LearningBoardUpdatePayload,
+  type LearningBoardCreatePayload,
+  type LearningBoardPostUpdatePayload,
   type QuestionItem,
   type MissionAchieverUpdateResult,
   type MissionCreatePayload,
@@ -237,6 +246,23 @@ interface StopwatchLap {
 }
 
 type ActivityShopTab = 'coupon-store' | 'coupon-record' | 'funding'
+type LearningBoardSort = 'number' | 'latest' | 'likes'
+
+interface LearningBoardFormState {
+  title: string
+  description: string
+  cover_image_url: string
+  is_active: boolean
+}
+
+interface LearningBoardPostFormState {
+  content: string
+  image_url: string
+}
+
+interface LearningBoardCommentDraftState {
+  [postId: number]: string
+}
 
 interface CouponFormState {
   name: string
@@ -519,6 +545,18 @@ const emptyFundingForm: FundingFormState = {
   target_amount: '20000',
 }
 
+const emptyLearningBoardForm: LearningBoardFormState = {
+  title: '',
+  description: '',
+  cover_image_url: '',
+  is_active: true,
+}
+
+const emptyLearningBoardPostForm: LearningBoardPostFormState = {
+  content: '',
+  image_url: '',
+}
+
 const sidebarMenuItems: SidebarMenuItem[] = [
   { label: '학생 목록', icon: Users, section: '학급 운영' },
   { label: '미션', icon: ScrollText, section: '학급 운영' },
@@ -662,9 +700,22 @@ function App() {
   const [couponUseForm, setCouponUseForm] = useState<CouponUseFormState>(emptyCouponUseForm)
   const [fundingForm, setFundingForm] = useState<FundingFormState>(emptyFundingForm)
   const [editingFundingProjectId, setEditingFundingProjectId] = useState<number | null>(null)
+  const [showFundingModal, setShowFundingModal] = useState(false)
   const [fundingContributionAmount, setFundingContributionAmount] = useState('100')
+  const [learningBoards, setLearningBoards] = useState<LearningBoard[]>([])
+  const [selectedLearningBoardId, setSelectedLearningBoardId] = useState<number | null>(null)
+  const [learningBoardSort, setLearningBoardSort] = useState<LearningBoardSort>('number')
+  const [learningBoardPosts, setLearningBoardPosts] = useState<LearningBoardPost[]>([])
+  const [learningBoardForm, setLearningBoardForm] = useState<LearningBoardFormState>(emptyLearningBoardForm)
+  const [editingLearningBoardId, setEditingLearningBoardId] = useState<number | null>(null)
+  const [showLearningBoardModal, setShowLearningBoardModal] = useState(false)
+  const [learningBoardPostForm, setLearningBoardPostForm] = useState<LearningBoardPostFormState>(emptyLearningBoardPostForm)
+  const [editingLearningPostId, setEditingLearningPostId] = useState<number | null>(null)
+  const [learningBoardCommentDrafts, setLearningBoardCommentDrafts] = useState<LearningBoardCommentDraftState>({})
   const [activityShopMessage, setActivityShopMessage] = useState('')
+  const [learningBoardMessage, setLearningBoardMessage] = useState('')
   const [activityShopLoading, setActivityShopLoading] = useState(false)
+  const [learningBoardLoading, setLearningBoardLoading] = useState(false)
   const [questions, setQuestions] = useState<QuestionItem[]>([])
   const [raid, setRaid] = useState<RaidSession | null>(null)
   const [raidLogs, setRaidLogs] = useState<RaidAction[]>([])
@@ -1011,6 +1062,13 @@ function App() {
     }
     return fundingProjects.find((project) => project.id === selectedFundingProjectId) ?? null
   }, [fundingProjects, selectedFundingProjectId])
+
+  const selectedLearningBoard = useMemo(() => {
+    if (!selectedLearningBoardId) {
+      return null
+    }
+    return learningBoards.find((board) => board.id === selectedLearningBoardId) ?? null
+  }, [learningBoards, selectedLearningBoardId])
 
   const selectedCouponForHistory = useMemo(() => {
     if (!couponHistoryCouponId) {
@@ -1428,9 +1486,16 @@ function App() {
     }
   }
 
+  const closeFundingModal = (): void => {
+    setShowFundingModal(false)
+    setEditingFundingProjectId(null)
+    setFundingForm(emptyFundingForm)
+  }
+
   const handleOpenCreateFunding = (): void => {
     setEditingFundingProjectId(null)
     setFundingForm(emptyFundingForm)
+    setShowFundingModal(true)
   }
 
   const handleOpenEditFunding = (project: FundingProject): void => {
@@ -1441,6 +1506,7 @@ function App() {
       reward_plan: project.reward_plan ?? '',
       target_amount: String(project.target_amount),
     })
+    setShowFundingModal(true)
   }
 
   const handleSaveFundingProject = async (): Promise<void> => {
@@ -1476,8 +1542,7 @@ function App() {
         setActivityShopMessage('펀딩 프로젝트를 만들었습니다.')
       }
 
-      setFundingForm(emptyFundingForm)
-      setEditingFundingProjectId(null)
+      closeFundingModal()
       await refreshActivityShopData()
     } catch {
       setActivityShopMessage('프로젝트 저장에 실패했습니다.')
@@ -1509,6 +1574,12 @@ function App() {
       return
     }
 
+    const targetProject = fundingProjects.find((project) => project.id === projectId)
+    if (!targetProject || targetProject.status !== 'active' || targetProject.current_amount >= targetProject.target_amount) {
+      setActivityShopMessage('목표 금액을 달성했거나 마감된 프로젝트는 기부할 수 없습니다.')
+      return
+    }
+
     const amount = Number(fundingContributionAmount)
     if (!Number.isFinite(amount) || amount <= 0) {
       setActivityShopMessage('기부 금액을 올바르게 입력해 주세요.')
@@ -1534,6 +1605,225 @@ function App() {
     }
   }
 
+  const closeLearningBoardModal = (): void => {
+    setShowLearningBoardModal(false)
+    setEditingLearningBoardId(null)
+    setLearningBoardForm(emptyLearningBoardForm)
+  }
+
+  const handleOpenCreateLearningBoard = (): void => {
+    setEditingLearningBoardId(null)
+    setLearningBoardForm(emptyLearningBoardForm)
+    setShowLearningBoardModal(true)
+  }
+
+  const handleOpenEditLearningBoard = (board: LearningBoard): void => {
+    setEditingLearningBoardId(board.id)
+    setLearningBoardForm({
+      title: board.title,
+      description: board.description ?? '',
+      cover_image_url: board.cover_image_url ?? '',
+      is_active: board.is_active,
+    })
+    setShowLearningBoardModal(true)
+  }
+
+  const refreshLearningBoards = async (): Promise<void> => {
+    const endpoint = canManageClassContent
+      ? '/classroom/learning-boards?include_inactive=true'
+      : '/classroom/learning-boards'
+    const boardRows = await api.get<LearningBoard[]>(endpoint)
+    setLearningBoards(boardRows)
+    if (boardRows.length > 0) {
+      setSelectedLearningBoardId((prev) => prev ?? boardRows[0]?.id ?? null)
+    } else {
+      setSelectedLearningBoardId(null)
+      setLearningBoardPosts([])
+    }
+  }
+
+  const refreshLearningBoardPosts = async (boardId: number): Promise<void> => {
+    if (!boardId) {
+      setLearningBoardPosts([])
+      return
+    }
+
+    const viewerId = selectedStudentForActivityShop ? `&viewer_student_id=${selectedStudentForActivityShop}` : ''
+    const rows = await api.get<LearningBoardPost[]>(
+      `/classroom/learning-boards/${boardId}/posts?sort=${learningBoardSort}${viewerId}`,
+    )
+    setLearningBoardPosts(rows)
+  }
+
+  const handleSaveLearningBoard = async (): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    const title = learningBoardForm.title.trim()
+    if (!title) {
+      setLearningBoardMessage('게시판 제목을 입력해 주세요.')
+      return
+    }
+
+    const payload: LearningBoardCreatePayload = {
+      title,
+      description: learningBoardForm.description.trim() || null,
+      cover_image_url: learningBoardForm.cover_image_url.trim() || null,
+      is_active: learningBoardForm.is_active,
+    }
+
+    const updatePayload: LearningBoardUpdatePayload = { ...payload }
+
+    setLearningBoardLoading(true)
+    try {
+      if (editingLearningBoardId) {
+        await api.patch<LearningBoard>(`/classroom/learning-boards/${editingLearningBoardId}`, updatePayload)
+        setLearningBoardMessage('게시판을 수정했습니다.')
+      } else {
+        await api.post<LearningBoard>('/classroom/learning-boards', payload)
+        setLearningBoardMessage('게시판을 만들었습니다.')
+      }
+      closeLearningBoardModal()
+      await refreshLearningBoards()
+    } catch {
+      setLearningBoardMessage('게시판 저장에 실패했습니다.')
+    } finally {
+      setLearningBoardLoading(false)
+    }
+  }
+
+  const handleDeleteLearningBoard = async (boardId: number): Promise<void> => {
+    if (!canManageClassContent) {
+      return
+    }
+
+    setLearningBoardLoading(true)
+    try {
+      await api.delete<{ success: boolean }>(`/classroom/learning-boards/${boardId}`)
+      setLearningBoardMessage('게시판을 삭제했습니다.')
+      await refreshLearningBoards()
+    } catch {
+      setLearningBoardMessage('게시판 삭제에 실패했습니다.')
+    } finally {
+      setLearningBoardLoading(false)
+    }
+  }
+
+  const handleSaveLearningBoardPost = async (): Promise<void> => {
+    if (!selectedLearningBoardId || !selectedStudentForActivityShop) {
+      setLearningBoardMessage('게시판과 학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    const content = learningBoardPostForm.content.trim()
+    if (!content) {
+      setLearningBoardMessage('글 내용을 입력해 주세요.')
+      return
+    }
+
+    setLearningBoardLoading(true)
+    try {
+      if (editingLearningPostId) {
+        const updatePayload: LearningBoardPostUpdatePayload = {
+          content,
+          image_url: learningBoardPostForm.image_url.trim() || null,
+        }
+        await api.patch<LearningBoardPost>(`/classroom/learning-boards/posts/${editingLearningPostId}`, updatePayload)
+        setLearningBoardMessage('게시글을 수정했습니다.')
+      } else {
+        const payload: LearningBoardPostCreatePayload = {
+          student_id: selectedStudentForActivityShop,
+          content,
+          image_url: learningBoardPostForm.image_url.trim() || null,
+        }
+        await api.post<LearningBoardPost>(`/classroom/learning-boards/${selectedLearningBoardId}/posts`, payload)
+        setLearningBoardMessage('게시글을 등록했습니다.')
+      }
+
+      setLearningBoardPostForm(emptyLearningBoardPostForm)
+      setEditingLearningPostId(null)
+      await refreshLearningBoardPosts(selectedLearningBoardId)
+      await refreshLearningBoards()
+    } catch {
+      setLearningBoardMessage('게시글 저장에 실패했습니다.')
+    } finally {
+      setLearningBoardLoading(false)
+    }
+  }
+
+  const handleDeleteLearningPost = async (postId: number): Promise<void> => {
+    if (!selectedLearningBoardId) {
+      return
+    }
+
+    setLearningBoardLoading(true)
+    try {
+      await api.delete<{ success: boolean }>(`/classroom/learning-boards/posts/${postId}`)
+      setLearningBoardMessage('게시글을 삭제했습니다.')
+      await refreshLearningBoardPosts(selectedLearningBoardId)
+      await refreshLearningBoards()
+    } catch {
+      setLearningBoardMessage('게시글 삭제에 실패했습니다.')
+    } finally {
+      setLearningBoardLoading(false)
+    }
+  }
+
+  const handleToggleLearningPostLike = async (postId: number): Promise<void> => {
+    if (!selectedStudentForActivityShop || !selectedLearningBoardId) {
+      setLearningBoardMessage('학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    try {
+      await api.post<LearningBoardLikeToggleResponse>(
+        `/classroom/learning-boards/posts/${postId}/likes?student_id=${selectedStudentForActivityShop}`,
+      )
+      await refreshLearningBoardPosts(selectedLearningBoardId)
+    } catch {
+      setLearningBoardMessage('좋아요 처리에 실패했습니다.')
+    }
+  }
+
+  const handleAddLearningComment = async (postId: number): Promise<void> => {
+    if (!selectedStudentForActivityShop || !selectedLearningBoardId) {
+      setLearningBoardMessage('학생을 먼저 선택해 주세요.')
+      return
+    }
+
+    const comment = (learningBoardCommentDrafts[postId] ?? '').trim()
+    if (!comment) {
+      return
+    }
+
+    const payload: LearningBoardCommentCreatePayload = {
+      student_id: selectedStudentForActivityShop,
+      content: comment,
+    }
+
+    try {
+      await api.post<LearningBoardComment>(`/classroom/learning-boards/posts/${postId}/comments`, payload)
+      setLearningBoardCommentDrafts((prev) => ({ ...prev, [postId]: '' }))
+      await refreshLearningBoardPosts(selectedLearningBoardId)
+      await refreshLearningBoards()
+    } catch {
+      setLearningBoardMessage('댓글 등록에 실패했습니다.')
+    }
+  }
+
+  const handleDeleteLearningComment = async (commentId: number): Promise<void> => {
+    if (!selectedLearningBoardId) {
+      return
+    }
+
+    try {
+      await api.delete<{ success: boolean }>(`/classroom/learning-boards/comments/${commentId}`)
+      await refreshLearningBoardPosts(selectedLearningBoardId)
+    } catch {
+      setLearningBoardMessage('댓글 삭제에 실패했습니다.')
+    }
+  }
 
   useEffect(() => {
     if (authUser) {
@@ -1622,6 +1912,39 @@ function App() {
 
     void loadFundingDetail()
   }, [authUser, selectedFundingProjectId, fundingProjects.length])
+
+  useEffect(() => {
+    if (!authUser || activeMenu !== '학습 게시판') {
+      return
+    }
+
+    const loadBoards = async () => {
+      try {
+        await refreshLearningBoards()
+      } catch {
+        setLearningBoardMessage('게시판 목록을 불러오지 못했습니다.')
+      }
+    }
+
+    void loadBoards()
+  }, [authUser, activeMenu, canManageClassContent])
+
+  useEffect(() => {
+    if (!authUser || activeMenu !== '학습 게시판' || !selectedLearningBoardId) {
+      setLearningBoardPosts([])
+      return
+    }
+
+    const loadPosts = async () => {
+      try {
+        await refreshLearningBoardPosts(selectedLearningBoardId)
+      } catch {
+        setLearningBoardPosts([])
+      }
+    }
+
+    void loadPosts()
+  }, [authUser, activeMenu, selectedLearningBoardId, learningBoardSort, selectedStudentForActivityShop])
 
 
   useEffect(() => {
@@ -4582,19 +4905,20 @@ function App() {
                     <div className="space-y-4">
                       {canManageClassContent ? (
                         <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                            <h4 className="text-lg font-semibold text-[#153a63]">{editingFundingProjectId ? '펀딩 프로젝트 수정' : '새 프로젝트 만들기'}</h4>
-                            <button type="button" onClick={handleOpenCreateFunding} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">새 폼</button>
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <h4 className="text-lg font-semibold text-[#153a63]">펀딩 프로젝트</h4>
+                              <p className="text-sm text-[#5c7594]">생성은 버튼과 팝업으로 분리되어 있습니다.</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleOpenCreateFunding}
+                              className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-xl bg-[#2563eb] px-4 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                            >
+                              <BadgePlus className="size-4" />
+                              프로젝트 만들기
+                            </button>
                           </div>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.title} onChange={(event) => setFundingForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="프로젝트 이름" />
-                            <input className="h-11 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.target_amount} onChange={(event) => setFundingForm((prev) => ({ ...prev, target_amount: event.target.value }))} placeholder="목표 금액" />
-                          </div>
-                          <textarea className="mt-2 min-h-[80px] w-full rounded-lg border border-[#c9d9f0] px-3 py-2 text-sm" value={fundingForm.description} onChange={(event) => setFundingForm((prev) => ({ ...prev, description: event.target.value }))} placeholder="프로젝트 설명" />
-                          <input className="mt-2 h-11 w-full rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingForm.reward_plan} onChange={(event) => setFundingForm((prev) => ({ ...prev, reward_plan: event.target.value }))} placeholder="달성 시 활동 계획" />
-                          <button type="button" onClick={() => void handleSaveFundingProject()} disabled={activityShopLoading} className="mt-3 h-10 cursor-pointer rounded-lg bg-[#10b981] px-4 text-sm font-semibold text-white hover:bg-[#059669] disabled:opacity-60">
-                            {editingFundingProjectId ? '프로젝트 수정 저장' : '프로젝트 생성'}
-                          </button>
                         </div>
                       ) : null}
 
@@ -4609,17 +4933,43 @@ function App() {
                                 </button>
                                 <span className={`rounded-full px-2 py-1 text-xs ${project.status === 'completed' ? 'bg-[#dcfce7] text-[#166534]' : project.status === 'closed' ? 'bg-[#e2e8f0] text-[#475569]' : 'bg-[#dbeafe] text-[#1d4ed8]'}`}>{project.status === 'completed' ? '달성' : project.status === 'closed' ? '마감' : '진행중'}</span>
                               </div>
-                              <p className="mt-2 text-sm font-semibold text-[#1f3f66]">{project.current_amount.toLocaleString()} / {project.target_amount.toLocaleString()} P ({project.progress_percent}%)</p>
+                              <p className="mt-2 text-sm font-semibold text-[#1f3f66]">{project.current_amount.toLocaleString()} / {project.target_amount.toLocaleString()} 원 ({project.progress_percent}%)</p>
                               <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[#e6eef9]"><div className="h-full bg-[linear-gradient(90deg,#3b82f6_0%,#10b981_100%)]" style={{ width: `${Math.min(100, project.progress_percent)}%` }} /></div>
                               <p className="mt-2 text-xs text-[#6b84a2]">기부자 {project.contributor_count}명 · 기부 {project.contribution_count}회</p>
 
                               <div className="mt-3 flex flex-wrap items-center gap-2">
-                                <input className="h-10 w-28 rounded-lg border border-[#c9d9f0] px-3 text-sm" value={fundingContributionAmount} onChange={(event) => setFundingContributionAmount(event.target.value)} />
-                                <button type="button" onClick={() => void handleContributeFunding(project.id)} disabled={activityShopLoading || project.status !== 'active'} className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:opacity-60">기부하기</button>
+                                <input
+                                  className="h-10 w-28 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                                  value={fundingContributionAmount}
+                                  onChange={(event) => setFundingContributionAmount(event.target.value)}
+                                  disabled={project.status !== 'active' || project.current_amount >= project.target_amount}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void handleContributeFunding(project.id)}
+                                  disabled={activityShopLoading || project.status !== 'active' || project.current_amount >= project.target_amount}
+                                  className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {project.status !== 'active' || project.current_amount >= project.target_amount ? '기부 마감' : '기부하기'}
+                                </button>
                                 {canManageClassContent ? (
                                   <>
-                                    <button type="button" onClick={() => handleOpenEditFunding(project)} className="h-10 cursor-pointer rounded-lg border border-[#c8d7ea] bg-[#f8fbff] px-3 text-sm text-[#21446f] hover:bg-[#eef5ff]">수정</button>
-                                    <button type="button" onClick={() => void handleCloseFundingProject(project.id)} className="h-10 cursor-pointer rounded-lg border border-[#e1cad1] bg-white px-3 text-sm text-[#a43b4f] hover:bg-[#fff4f6]">마감</button>
+                                    <button
+                                      type="button"
+                                      aria-label="프로젝트 수정"
+                                      onClick={() => handleOpenEditFunding(project)}
+                                      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                                    >
+                                      <Pencil className="size-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      aria-label="프로젝트 마감"
+                                      onClick={() => void handleCloseFundingProject(project.id)}
+                                      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                                    >
+                                      <Lock className="size-4" />
+                                    </button>
                                   </>
                                 ) : null}
                               </div>
@@ -4634,7 +4984,7 @@ function App() {
                             {fundingProjectDetail?.contributions.length ? fundingProjectDetail.contributions.map((contribution) => (
                               <div key={contribution.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-sm">
                                 <p className="font-semibold text-[#1f3f66]">{contribution.student_number}번 {contribution.student_name}</p>
-                                <p className="text-xs text-[#5f7897]">+{contribution.amount} P</p>
+                                <p className="text-xs text-[#5f7897]">+{contribution.amount.toLocaleString()} 원</p>
                                 <p className="text-xs text-[#7890ac]">{new Date(contribution.created_at).toLocaleString('ko-KR')}</p>
                               </div>
                             )) : <p className="text-sm text-[#7890ac]">아직 기부 기록이 없습니다.</p>}
@@ -4972,7 +5322,229 @@ function App() {
                 </div>
               ) : null}
 
-              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴', '학급 활동 상점'].includes(activeMenu) ? (
+              {activeMenu === '학습 게시판' ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-heading text-2xl font-semibold text-slate-900">학습 게시판</h3>
+                        <p className="text-sm text-slate-600">학생들은 글/댓글/좋아요로 참여하고, 선생님은 수정·삭제를 관리할 수 있습니다.</p>
+                      </div>
+                      {canManageClassContent ? (
+                        <button
+                          type="button"
+                          onClick={handleOpenCreateLearningBoard}
+                          className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-xl bg-[#2563eb] px-4 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                        >
+                          <BadgePlus className="size-4" />
+                          게시판 만들기
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {learningBoardMessage ? (
+                    <div className="rounded-xl border border-[#cfe2f8] bg-[#eef6ff] px-3 py-2 text-sm text-[#1f4d7d]">{learningBoardMessage}</div>
+                  ) : null}
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {learningBoards.map((board) => (
+                      <article key={board.id} className={`rounded-2xl border p-4 shadow-sm ${selectedLearningBoardId === board.id ? 'border-[#7ea8df] bg-[#f6fbff]' : 'border-[#d8e4f2] bg-white'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-lg font-semibold text-[#173c65]">{board.title}</h4>
+                            <p className="mt-1 line-clamp-2 text-sm text-[#5c7594]">{board.description || '설명 없음'}</p>
+                          </div>
+                          <span className={`rounded-full px-2 py-1 text-xs ${board.is_active ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#e2e8f0] text-[#475569]'}`}>{board.is_active ? '활성' : '닫힘'}</span>
+                        </div>
+                        <p className="mt-2 text-xs text-[#7088a5]">번호 {board.id} · 게시글 {board.post_count}개</p>
+                        <div className="mt-3 flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLearningBoardId(board.id)}
+                            className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                          >
+                            게시판 열기
+                          </button>
+                          {canManageClassContent ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                aria-label="게시판 수정"
+                                onClick={() => handleOpenEditLearningBoard(board)}
+                                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                              >
+                                <Pencil className="size-4" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label="게시판 삭제"
+                                onClick={() => void handleDeleteLearningBoard(board.id)}
+                                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                              >
+                                <Trash2 className="size-4" />
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  {selectedLearningBoard ? (
+                    <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h4 className="text-lg font-semibold text-[#173c65]">{selectedLearningBoard.title}</h4>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => setLearningBoardSort('number')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'number' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>번호순</button>
+                          <button type="button" onClick={() => setLearningBoardSort('latest')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'latest' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>최신순</button>
+                          <button type="button" onClick={() => setLearningBoardSort('likes')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'likes' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>좋아요순</button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-[#dbe7f7] bg-[#f8fbff] p-3">
+                        <p className="mb-2 text-xs text-[#5c7594]">{editingLearningPostId ? '게시글 수정' : '새 글 작성'}</p>
+                        <textarea
+                          className="min-h-24 w-full rounded-xl border border-[#cfdeef] bg-white px-3 py-2 text-sm text-[#193654]"
+                          value={learningBoardPostForm.content}
+                          onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, content: event.target.value }))}
+                          placeholder="게시글 내용을 입력하세요"
+                        />
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <input
+                            className="h-10 flex-1 min-w-[180px] rounded-xl border border-[#cfdeef] bg-white px-3 text-sm text-[#193654]"
+                            value={learningBoardPostForm.image_url}
+                            onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, image_url: event.target.value }))}
+                            placeholder="이미지 URL (선택)"
+                          />
+                          <Button className="h-10 cursor-pointer" onClick={() => void handleSaveLearningBoardPost()} disabled={learningBoardLoading}>
+                            {editingLearningPostId ? '수정 저장' : '글 작성하기'}
+                          </Button>
+                          {editingLearningPostId ? (
+                            <Button
+                              variant="outline"
+                              className="h-10 cursor-pointer"
+                              onClick={() => {
+                                setEditingLearningPostId(null)
+                                setLearningBoardPostForm(emptyLearningBoardPostForm)
+                              }}
+                            >
+                              취소
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                        {learningBoardPosts.map((post) => {
+                          const canManagePost = canManageClassContent || (isStudentSession && studentSessionId === post.student_id)
+
+                          return (
+                            <article key={post.id} className="rounded-xl border border-[#dbe7f7] bg-white p-3 shadow-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <div>
+                                  <p className="text-sm font-semibold text-[#173c65]">{post.student_number}번 {post.student_name}</p>
+                                  <p className="text-xs text-[#7890ac]">{new Date(post.created_at).toLocaleString('ko-KR')}</p>
+                                </div>
+                                {canManagePost ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      aria-label="게시글 수정"
+                                      onClick={() => {
+                                        setEditingLearningPostId(post.id)
+                                        setLearningBoardPostForm({
+                                          content: post.content,
+                                          image_url: post.image_url ?? '',
+                                        })
+                                      }}
+                                      className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                                    >
+                                      <Pencil className="size-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      aria-label="게시글 삭제"
+                                      onClick={() => void handleDeleteLearningPost(post.id)}
+                                      className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                                    >
+                                      <Trash2 className="size-4" />
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <p className="mt-2 whitespace-pre-wrap break-words text-sm text-[#324f71]">{post.content}</p>
+                              {post.image_url ? (
+                                <img src={post.image_url} alt="게시글 이미지" className="mt-3 h-48 w-full rounded-lg object-cover" />
+                              ) : null}
+
+                              <div className="mt-3 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleToggleLearningPostLike(post.id)}
+                                  className={`inline-flex h-9 cursor-pointer items-center gap-1 rounded-lg border px-3 text-xs font-semibold ${post.liked_by_me ? 'border-[#f8b4c2] bg-[#fff1f5] text-[#be123c]' : 'border-[#d0dff0] bg-[#f8fbff] text-[#365a80]'}`}
+                                >
+                                  <Heart className="size-4" /> 좋아요 {post.like_count}
+                                </button>
+                                <span className="inline-flex h-9 items-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] px-3 text-xs font-semibold text-[#365a80]">
+                                  <MessageCircleHeart className="mr-1 size-4" /> 댓글 {post.comment_count}
+                                </span>
+                              </div>
+
+                              <div className="mt-3 space-y-2">
+                                {post.comments.slice(0, 4).map((comment) => {
+                                  const canManageComment = canManageClassContent || (isStudentSession && studentSessionId === comment.student_id)
+                                  return (
+                                    <div key={comment.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-xs">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="font-semibold text-[#1f3f66]">{comment.student_number}번 {comment.student_name}</p>
+                                        {canManageComment ? (
+                                          <button
+                                            type="button"
+                                            aria-label="댓글 삭제"
+                                            onClick={() => void handleDeleteLearningComment(comment.id)}
+                                            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                                          >
+                                            <Trash2 className="size-3" />
+                                          </button>
+                                        ) : null}
+                                      </div>
+                                      <p className="mt-1 text-[#4e6784]">{comment.content}</p>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+
+                              <div className="mt-3 flex items-center gap-2">
+                                <input
+                                  className="h-10 min-w-0 flex-1 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                                  value={learningBoardCommentDrafts[post.id] ?? ''}
+                                  onChange={(event) => setLearningBoardCommentDrafts((prev) => ({ ...prev, [post.id]: event.target.value }))}
+                                  placeholder="댓글을 입력하세요"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void handleAddLearningComment(post.id)}
+                                  className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                                >
+                                  등록
+                                </button>
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[#cadcf1] bg-[#f7fbff] px-4 py-6 text-sm text-[#67809f]">
+                      게시판을 선택하면 학생 글과 댓글을 볼 수 있습니다.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴', '학급 활동 상점', '학습 게시판'].includes(activeMenu) ? (
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
                     <p className="text-xs text-muted-foreground">총 학생</p>
@@ -5092,6 +5664,136 @@ function App() {
                   <Button variant="outline" className="h-10 cursor-pointer" onClick={closeCouponModal}>취소</Button>
                   <Button className="h-10 cursor-pointer" onClick={() => void handleSaveCoupon()} disabled={activityShopLoading}>
                     {activityShopLoading ? '저장 중...' : editingCouponId ? '수정 완료' : '쿠폰 만들기'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showFundingModal ? (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#05101dd4] p-4">
+              <div className="modal-enter w-full max-w-3xl rounded-2xl border border-[#c8d9ec] bg-white p-5 shadow-[0_24px_50px_rgba(10,37,70,0.26)]">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="font-heading text-xl font-semibold text-[#143760]">{editingFundingProjectId ? '펀딩 프로젝트 수정' : '펀딩 프로젝트 만들기'}</h3>
+                  <button
+                    type="button"
+                    aria-label="닫기"
+                    onClick={closeFundingModal}
+                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d2deed] text-[#375b81] transition-colors duration-[200ms] hover:bg-[#eef5ff]"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-[#4f6784]">
+                    프로젝트 이름 *
+                    <input
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={fundingForm.title}
+                      onChange={(event) => setFundingForm((prev) => ({ ...prev, title: event.target.value }))}
+                    />
+                  </label>
+                  <label className="text-xs text-[#4f6784]">
+                    목표 금액(원)
+                    <input
+                      type="number"
+                      min={1}
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={fundingForm.target_amount}
+                      onChange={(event) => setFundingForm((prev) => ({ ...prev, target_amount: event.target.value }))}
+                    />
+                  </label>
+                </div>
+
+                <label className="mt-3 block text-xs text-[#4f6784]">
+                  프로젝트 설명
+                  <textarea
+                    className="mt-1 min-h-20 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 py-2 text-sm text-[#193654]"
+                    value={fundingForm.description}
+                    onChange={(event) => setFundingForm((prev) => ({ ...prev, description: event.target.value }))}
+                  />
+                </label>
+
+                <label className="mt-3 block text-xs text-[#4f6784]">
+                  달성 시 활동 계획
+                  <input
+                    className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                    value={fundingForm.reward_plan}
+                    onChange={(event) => setFundingForm((prev) => ({ ...prev, reward_plan: event.target.value }))}
+                  />
+                </label>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button variant="outline" className="h-10 cursor-pointer" onClick={closeFundingModal}>취소</Button>
+                  <Button className="h-10 cursor-pointer" onClick={() => void handleSaveFundingProject()} disabled={activityShopLoading}>
+                    {activityShopLoading ? '저장 중...' : editingFundingProjectId ? '수정 완료' : '프로젝트 만들기'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {showLearningBoardModal ? (
+            <div className="fixed inset-0 z-[95] flex items-center justify-center bg-[#05101dd4] p-4">
+              <div className="modal-enter w-full max-w-3xl rounded-2xl border border-[#c8d9ec] bg-white p-5 shadow-[0_24px_50px_rgba(10,37,70,0.26)]">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="font-heading text-xl font-semibold text-[#143760]">{editingLearningBoardId ? '학습 게시판 수정' : '새 학습 게시판 만들기'}</h3>
+                  <button
+                    type="button"
+                    aria-label="닫기"
+                    onClick={closeLearningBoardModal}
+                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#d2deed] text-[#375b81] transition-colors duration-[200ms] hover:bg-[#eef5ff]"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="grid gap-3">
+                  <label className="text-xs text-[#4f6784]">
+                    게시판 제목 *
+                    <input
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={learningBoardForm.title}
+                      onChange={(event) => setLearningBoardForm((prev) => ({ ...prev, title: event.target.value }))}
+                      placeholder="예: 과학 1단원 지층 사진 올리기"
+                    />
+                  </label>
+
+                  <label className="text-xs text-[#4f6784]">
+                    게시판 설명
+                    <textarea
+                      className="mt-1 min-h-24 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 py-2 text-sm text-[#193654]"
+                      value={learningBoardForm.description}
+                      onChange={(event) => setLearningBoardForm((prev) => ({ ...prev, description: event.target.value }))}
+                      placeholder="학생들에게 과제 제출 방법이나 주의사항을 안내해 주세요"
+                    />
+                  </label>
+
+                  <label className="text-xs text-[#4f6784]">
+                    대표 이미지 URL (선택)
+                    <input
+                      className="mt-1 h-11 w-full rounded-xl border border-[#cfdeef] bg-[#f9fcff] px-3 text-sm text-[#193654]"
+                      value={learningBoardForm.cover_image_url}
+                      onChange={(event) => setLearningBoardForm((prev) => ({ ...prev, cover_image_url: event.target.value }))}
+                      placeholder="https://..."
+                    />
+                  </label>
+
+                  <label className="inline-flex items-center gap-2 rounded-xl border border-[#d2deed] bg-[#f8fbff] px-3 py-2 text-sm text-[#304f72]">
+                    <input
+                      type="checkbox"
+                      checked={learningBoardForm.is_active}
+                      onChange={(event) => setLearningBoardForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                    />
+                    게시판 활성화
+                  </label>
+                </div>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button variant="outline" className="h-10 cursor-pointer" onClick={closeLearningBoardModal}>취소</Button>
+                  <Button className="h-10 cursor-pointer" onClick={() => void handleSaveLearningBoard()} disabled={learningBoardLoading}>
+                    {learningBoardLoading ? '저장 중...' : editingLearningBoardId ? '수정 완료' : '게시판 만들기'}
                   </Button>
                 </div>
               </div>

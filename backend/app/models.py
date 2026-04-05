@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -177,6 +177,77 @@ class ActivityCouponUsage(Base):
     coupon_id: Mapped[int] = mapped_column(ForeignKey("activity_coupons.id"), index=True)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LearningBoard(Base):
+    __tablename__ = "learning_boards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(140), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cover_image_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class LearningBoardPost(Base):
+    __tablename__ = "learning_board_posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    board_id: Mapped[int] = mapped_column(ForeignKey("learning_boards.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class LearningBoardComment(Base):
+    __tablename__ = "learning_board_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("learning_board_posts.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class LearningBoardLike(Base):
+    __tablename__ = "learning_board_likes"
+    __table_args__ = (
+        UniqueConstraint("post_id", "student_id", name="uq_learning_board_post_student_like"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("learning_board_posts.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -376,6 +447,15 @@ Student.coupon_usages = relationship(
 Student.funding_contributions = relationship(
     "FundingContribution", backref="student", cascade="all,delete"
 )
+Student.learning_board_posts = relationship(
+    "LearningBoardPost", backref="student", cascade="all,delete"
+)
+Student.learning_board_comments = relationship(
+    "LearningBoardComment", backref="student", cascade="all,delete"
+)
+Student.learning_board_likes = relationship(
+    "LearningBoardLike", backref="student", cascade="all,delete"
+)
 Student.raid_actions = relationship("RaidActionLog", backref="student", cascade="all,delete")
 
 ShopItem.purchases = relationship("ShopPurchase", backref="item", cascade="all,delete")
@@ -385,6 +465,14 @@ ActivityCoupon.purchases = relationship(
 ActivityCoupon.usages = relationship(
     "ActivityCouponUsage", backref="coupon", cascade="all,delete"
 )
+LearningBoard.created_by_user = relationship("User")
+LearningBoard.posts = relationship("LearningBoardPost", backref="board", cascade="all,delete")
+
+LearningBoardPost.comments = relationship(
+    "LearningBoardComment", backref="post", cascade="all,delete"
+)
+LearningBoardPost.likes = relationship("LearningBoardLike", backref="post", cascade="all,delete")
+
 FundingProject.contributions = relationship(
     "FundingContribution", backref="project", cascade="all,delete"
 )
