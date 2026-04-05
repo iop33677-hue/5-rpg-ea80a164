@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 # Import and initialize standard logging
 from app.logging_setup import setup_logging
 from app.request_logging_middleware import register_request_logging_middleware
+from app.database import Base, get_engine
+import app.models  # noqa: F401
 
 logger = setup_logging()
 
@@ -112,6 +114,12 @@ from app.routers import auth_status, classroom, runtime_uploads
 app.include_router(auth_status.router)
 app.include_router(classroom.router)
 app.include_router(runtime_uploads.router)
+
+
+@app.on_event("startup")
+def ensure_tables_exist() -> None:
+    """Create any missing tables so newly added features are usable immediately."""
+    Base.metadata.create_all(bind=get_engine())
 
 
 @app.get("/")

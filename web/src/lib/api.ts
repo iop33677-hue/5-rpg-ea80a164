@@ -46,8 +46,25 @@ async function apiRequest<T>(endpoint: string, method: HttpMethod, body?: unknow
   }
 
   if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || '요청 처리 중 오류가 발생했습니다.')
+    let message = '요청 처리 중 오류가 발생했습니다.'
+    const rawBody = await response.text()
+
+    if (rawBody.trim()) {
+      try {
+        const errorPayload = JSON.parse(rawBody) as { detail?: string; message?: string }
+        if (typeof errorPayload.detail === 'string' && errorPayload.detail.trim()) {
+          message = errorPayload.detail
+        } else if (typeof errorPayload.message === 'string' && errorPayload.message.trim()) {
+          message = errorPayload.message
+        } else {
+          message = rawBody
+        }
+      } catch {
+        message = rawBody
+      }
+    }
+
+    throw new Error(message)
   }
 
   return (await response.json()) as T

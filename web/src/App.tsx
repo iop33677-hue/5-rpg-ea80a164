@@ -1666,6 +1666,11 @@ function App() {
       return
     }
 
+    if (title.length < 2) {
+      setLearningBoardMessage('게시판 제목은 2자 이상 입력해 주세요.')
+      return
+    }
+
     const payload: LearningBoardCreatePayload = {
       title,
       description: learningBoardForm.description.trim() || null,
@@ -1681,13 +1686,15 @@ function App() {
         await api.patch<LearningBoard>(`/classroom/learning-boards/${editingLearningBoardId}`, updatePayload)
         setLearningBoardMessage('게시판을 수정했습니다.')
       } else {
-        await api.post<LearningBoard>('/classroom/learning-boards', payload)
+        const createdBoard = await api.post<LearningBoard>('/classroom/learning-boards', payload)
+        setSelectedLearningBoardId(createdBoard.id)
         setLearningBoardMessage('게시판을 만들었습니다.')
       }
       closeLearningBoardModal()
       await refreshLearningBoards()
-    } catch {
-      setLearningBoardMessage('게시판 저장에 실패했습니다.')
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : ''
+      setLearningBoardMessage(errorMessage || '게시판 저장에 실패했습니다.')
     } finally {
       setLearningBoardLoading(false)
     }
@@ -1938,8 +1945,10 @@ function App() {
     const loadPosts = async () => {
       try {
         await refreshLearningBoardPosts(selectedLearningBoardId)
-      } catch {
+      } catch (error) {
         setLearningBoardPosts([])
+        const errorMessage = error instanceof Error ? error.message : ''
+        setLearningBoardMessage(errorMessage || '게시판을 열지 못했습니다.')
       }
     }
 
