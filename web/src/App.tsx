@@ -1131,6 +1131,24 @@ function App() {
       return teacherLikePost.student_id
     }
 
+    const teacherLikeComment = learningBoardPosts
+      .flatMap((post) => post.comments)
+      .find((comment) => {
+        const normalizedName = comment.student_name.trim().toLowerCase()
+        return (
+          comment.student_number <= 0 ||
+          normalizedName.includes('교사') ||
+          normalizedName.includes('선생') ||
+          normalizedName.includes('관리자') ||
+          normalizedName.includes('admin') ||
+          normalizedName.includes('이용호')
+        )
+      })
+
+    if (teacherLikeComment?.student_id) {
+      return teacherLikeComment.student_id
+    }
+
     const authLinkedStudentId = (authUser as (User & { student_id?: number | string }) | null)?.student_id
     const parsedAuthLinkedStudentId = Number(authLinkedStudentId)
 
@@ -1748,15 +1766,18 @@ function App() {
     setShowLearningPostModal(false)
     setEditingLearningPostId(null)
     setLearningBoardPostForm(emptyLearningBoardPostForm)
+    setLearningBoardMessage('')
   }
 
   const handleOpenCreateLearningPost = (): void => {
+    setLearningBoardMessage('')
     setEditingLearningPostId(null)
     setLearningBoardPostForm(emptyLearningBoardPostForm)
     setShowLearningPostModal(true)
   }
 
   const handleOpenEditLearningPost = (post: LearningBoardPost): void => {
+    setLearningBoardMessage('')
     setEditingLearningPostId(post.id)
     setLearningBoardPostForm({
       content: post.content,
@@ -2006,8 +2027,19 @@ function App() {
   }
 
   const handleAddLearningComment = async (postId: number): Promise<void> => {
-    if (!selectedStudentForActivityShop || !selectedLearningBoardId) {
-      setLearningBoardMessage('학생을 먼저 선택해 주세요.')
+    if (!selectedLearningBoardId) {
+      setLearningBoardMessage('게시판을 먼저 선택해 주세요.')
+      return
+    }
+
+    const targetStudentId = hasTeacherModeAccess ? resolvedLearningBoardTeacherId : selectedStudentForActivityShop
+
+    if (!targetStudentId) {
+      setLearningBoardMessage(
+        hasTeacherModeAccess
+          ? '교사 댓글 작성자 계정을 찾지 못했어요. 학생 목록에서 교사 이용호 계정을 확인해 주세요.'
+          : '학생을 먼저 선택해 주세요.',
+      )
       return
     }
 
@@ -2017,13 +2049,14 @@ function App() {
     }
 
     const payload: LearningBoardCommentCreatePayload = {
-      student_id: selectedStudentForActivityShop,
+      student_id: targetStudentId,
       content: comment,
     }
 
     try {
       await api.post<LearningBoardComment>(`/classroom/learning-boards/posts/${postId}/comments`, payload)
       setLearningBoardCommentDrafts((prev) => ({ ...prev, [postId]: '' }))
+      setLearningBoardMessage('댓글을 등록했습니다.')
       await refreshLearningBoardPosts(selectedLearningBoardId)
       await refreshLearningBoards()
     } catch {
@@ -5759,10 +5792,22 @@ function App() {
                                           <div className="mt-3 space-y-2">
                                             {post.comments.slice(0, 4).map((comment) => {
                                               const canManageComment = canManageClassContent || (isStudentSession && studentSessionId === comment.student_id)
+                                              const normalizedCommentName = comment.student_name.trim().toLowerCase()
+                                              const isTeacherComment =
+                                                (resolvedLearningBoardTeacherId !== null && comment.student_id === resolvedLearningBoardTeacherId) ||
+                                                comment.student_number <= 0 ||
+                                                normalizedCommentName.includes('교사') ||
+                                                normalizedCommentName.includes('선생') ||
+                                                normalizedCommentName.includes('관리자') ||
+                                                normalizedCommentName.includes('admin') ||
+                                                normalizedCommentName.includes('이용호')
+                                              const commentAuthorLabel = isTeacherComment
+                                                ? LEARNING_BOARD_TEACHER_LABEL
+                                                : `${comment.student_number}번 ${comment.student_name}`
                                               return (
                                                 <div key={comment.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-xs">
                                                   <div className="flex items-center justify-between gap-2">
-                                                    <p className="font-semibold text-[#1f3f66]">{comment.student_number}번 {comment.student_name}</p>
+                                                    <p className="font-semibold text-[#1f3f66]">{commentAuthorLabel}</p>
                                                     {canManageComment ? (
                                                       <button
                                                         type="button"
@@ -6092,6 +6137,10 @@ function App() {
                     onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, content: event.target.value }))}
                     placeholder="게시글 내용을 입력하세요"
                   />
+
+                  {learningBoardMessage ? (
+                    <p className="rounded-xl border border-[#f2d5dc] bg-[#fff6f8] px-3 py-2 text-sm text-[#8c2f44]">{learningBoardMessage}</p>
+                  ) : null}
 
                   <div className="flex flex-wrap items-center gap-2">
                     <input
