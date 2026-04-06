@@ -783,6 +783,7 @@ function App() {
   const [selectedFundingProjectId, setSelectedFundingProjectId] = useState<number | null>(null)
   const [fundingProjectDetail, setFundingProjectDetail] = useState<FundingProjectDetail | null>(null)
   const [selectedStudentForActivityShop, setSelectedStudentForActivityShop] = useState<number | null>(null)
+  const [selectedStudentForAvatarShop, setSelectedStudentForAvatarShop] = useState<number | null>(null)
   const [couponForm, setCouponForm] = useState<CouponFormState>(emptyCouponForm)
   const [editingCouponId, setEditingCouponId] = useState<number | null>(null)
   const [showCouponModal, setShowCouponModal] = useState(false)
@@ -1142,6 +1143,25 @@ function App() {
     return studentSessionId === targetStudentId
   }
 
+  const avatarPartImageMap: Record<string, string> = {
+    'face:기본1': '/images/avatars/pixel/face-basic-1.svg',
+    'face:기본2': '/images/avatars/pixel/face-basic-2.svg',
+    'face:기본3': '/images/avatars/pixel/face-basic-3.svg',
+    'face:기본4': '/images/avatars/pixel/face-basic-4.svg',
+    'face:기본5': '/images/avatars/pixel/face-basic-5.svg',
+    'hair:기본1': '/images/avatars/pixel/hair-basic-1.svg',
+    'hair:기본2': '/images/avatars/pixel/hair-basic-2.svg',
+    'hair:기본3': '/images/avatars/pixel/hair-basic-3.svg',
+    'hair:기본4': '/images/avatars/pixel/hair-basic-4.svg',
+    'hair:기본5': '/images/avatars/pixel/hair-basic-5.svg',
+    'clothes:남자용 옷': '/images/avatars/pixel/clothes-male-default.svg',
+    'clothes:여자용 옷': '/images/avatars/pixel/clothes-female-default.svg',
+  }
+
+  const getAvatarPartImage = (slot: string, name: string): string | null => {
+    return avatarPartImageMap[`${slot}:${name}`] ?? null
+  }
+
   const avatarSlotOptions = [
     { key: 'all', label: '전체' },
     { key: 'face', label: '얼굴' },
@@ -1181,6 +1201,14 @@ function App() {
     return Object.values(equippedAvatarBySlot).sort((a, b) => a.layer_order - b.layer_order)
   }, [equippedAvatarBySlot])
 
+  const avatarShopEquippedLayers = useMemo(() => {
+    if (!selectedStudentForAvatarShop || !studentDetail || studentDetail.student.id !== selectedStudentForAvatarShop) {
+      return [] as StudentDetail['avatars']
+    }
+
+    return studentDetail.avatars.filter((avatar) => avatar.is_equipped).sort((a, b) => a.layer_order - b.layer_order)
+  }, [selectedStudentForAvatarShop, studentDetail])
+
   const sidebarItems = isStudentSession
     ? sidebarMenuItems.filter((item) => item.label !== '학생 로그인')
     : sidebarMenuItems
@@ -1203,6 +1231,33 @@ function App() {
     }
     return students.find((student) => student.id === selectedStudentForActivityShop) ?? null
   }, [selectedStudentForActivityShop, students])
+
+  const avatarShopSelectableStudents = useMemo(() => {
+    if (isStudentSession && Number.isFinite(studentSessionId)) {
+      return visibleStudents.filter((student) => student.id === studentSessionId)
+    }
+    return visibleStudents
+  }, [isStudentSession, studentSessionId, visibleStudents])
+
+  const selectedAvatarShopStudent = useMemo(() => {
+    if (!selectedStudentForAvatarShop) {
+      return null
+    }
+
+    return students.find((student) => student.id === selectedStudentForAvatarShop) ?? null
+  }, [selectedStudentForAvatarShop, students])
+
+  const avatarShopDetail = useMemo(() => {
+    if (!selectedStudentForAvatarShop) {
+      return null
+    }
+
+    if (!studentDetail || studentDetail.student.id !== selectedStudentForAvatarShop) {
+      return null
+    }
+
+    return studentDetail
+  }, [selectedStudentForAvatarShop, studentDetail])
 
   const learningBoardTeacherAuthor = useMemo(() => {
     const normalizedAuthName = (authUser?.name ?? '').trim().toLowerCase()
@@ -2274,6 +2329,29 @@ function App() {
   }, [activityShopSelectableStudents, selectedStudentForActivityShop])
 
   useEffect(() => {
+    if (avatarShopSelectableStudents.length === 0) {
+      setSelectedStudentForAvatarShop(null)
+      return
+    }
+
+    const studentExists = avatarShopSelectableStudents.some((student) => student.id === selectedStudentForAvatarShop)
+    if (!selectedStudentForAvatarShop || !studentExists) {
+      setSelectedStudentForAvatarShop(avatarShopSelectableStudents[0]?.id ?? null)
+    }
+  }, [avatarShopSelectableStudents, selectedStudentForAvatarShop])
+
+  useEffect(() => {
+    if (activeMenu !== '아바타 상점' || !selectedStudentForAvatarShop) {
+      return
+    }
+
+    void loadStudentDetail(selectedStudentForAvatarShop)
+    setAvatarGachaMessage('')
+    setAvatarSlotFilter('all')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMenu, selectedStudentForAvatarShop])
+
+  useEffect(() => {
     if (!authUser || !selectedStudentForActivityShop) {
       setCouponInventory([])
       return
@@ -3199,12 +3277,14 @@ function App() {
     }
   }
 
-  const handleDrawAvatarGacha = async (drawCount: 1 | 10) => {
-    if (!studentDetail) {
+  const handleDrawAvatarGacha = async (drawCount: 1 | 10, targetStudentId?: number) => {
+    const resolvedStudentId = targetStudentId ?? studentDetail?.student.id ?? null
+    if (!resolvedStudentId) {
+      setAvatarGachaMessage('가챠를 진행할 학생을 먼저 선택해 주세요.')
       return
     }
 
-    if (!canEditStudentBySession(studentDetail.student.id)) {
+    if (!canEditStudentBySession(resolvedStudentId)) {
       setAvatarGachaMessage('본인 계정에서만 가챠를 진행할 수 있습니다.')
       return
     }
@@ -3214,11 +3294,11 @@ function App() {
 
     try {
       const result = await api.post<AvatarGachaDrawResult>(
-        `/classroom/students/${studentDetail.student.id}/avatars/gacha/draw`,
+        `/classroom/students/${resolvedStudentId}/avatars/gacha/draw`,
         { draw_count: drawCount },
       )
 
-      await loadStudentDetail(studentDetail.student.id)
+      await loadStudentDetail(resolvedStudentId)
 
       const newCount = result.rewards.filter((reward) => reward.is_new).length
       const duplicateCount = result.rewards.length - newCount
@@ -4553,64 +4633,72 @@ function App() {
                                   <p>창의 +{studentDetail.avatar_collection.bonus_leadership}</p>
                                 </div>
 
-                                <div className="relative mx-auto h-72 w-56 border border-[#d3e1f4] bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_100%)]">
-                                  <div className="absolute left-1/2 top-12 h-20 w-20 -translate-x-1/2 rounded-full border-2 border-[#1f2937] bg-[#ffe8df]" />
-                                  <div className="absolute left-1/2 top-[7.3rem] h-24 w-[5.5rem] -translate-x-1/2 rounded-3xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
-                                  <div className="absolute left-1/2 top-[13.2rem] h-14 w-[2.2rem] -translate-x-[1.7rem] rounded-b-2xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
-                                  <div className="absolute left-1/2 top-[13.2rem] h-14 w-[2.2rem] translate-x-[-0.1rem] rounded-b-2xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
-
-                                  {equippedAvatarLayers.map((avatar) => (
-                                    <div
-                                      key={`equipped-layer-${avatar.id}`}
-                                      className={`absolute border-2 border-[#1f2937] ${
-                                        avatar.slot === 'hair'
-                                          ? 'h-24 w-24 rounded-[45%_45%_52%_52%]'
-                                          : avatar.slot === 'face'
-                                            ? 'h-8 w-14 rounded-full'
-                                            : avatar.slot === 'clothes'
-                                              ? 'h-16 w-24 rounded-3xl'
-                                              : avatar.slot === 'weapon'
-                                                ? 'h-16 w-3 rounded-full'
-                                                : avatar.slot === 'cape'
-                                                  ? 'h-20 w-24 rounded-[45%_45%_55%_55%]'
-                                                  : 'h-10 w-10 rounded-full'
-                                      }`}
-                                      style={{
-                                        left: `calc(50% + ${avatar.render_x}px)`,
-                                        top: `calc(50% + ${avatar.render_y}px)`,
-                                        zIndex: avatar.layer_order,
-                                        transform: 'translate(-50%, -50%)',
-                                        backgroundColor: avatar.preview_color ?? '#d9e4ff',
-                                        opacity: avatar.slot === 'effect' ? 0.75 : 1,
-                                      }}
-                                      title={`${avatar.slot} · ${avatar.name}`}
+                                <div className="relative mx-auto flex h-72 w-56 items-center justify-center border border-[#d3e1f4] bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_100%)]">
+                                  <div className="relative h-56 w-56">
+                                    <img
+                                      src="/images/avatars/pixel/base-body.svg"
+                                      alt="기본 아바타 바디"
+                                      className="absolute inset-0 h-full w-full object-contain"
+                                      style={{ imageRendering: 'pixelated' }}
                                     />
-                                  ))}
+
+                                    {equippedAvatarLayers.map((avatar) => {
+                                      const avatarSprite = getAvatarPartImage(avatar.slot, avatar.name)
+
+                                      if (avatarSprite) {
+                                        return (
+                                          <img
+                                            key={`equipped-layer-${avatar.id}`}
+                                            src={avatarSprite}
+                                            alt={`${avatar.name} ${avatar.slot}`}
+                                            className="absolute inset-0 h-full w-full object-contain"
+                                            style={{ imageRendering: 'pixelated', zIndex: avatar.layer_order }}
+                                            title={`${avatar.slot} · ${avatar.name}`}
+                                          />
+                                        )
+                                      }
+
+                                      return (
+                                        <div
+                                          key={`equipped-layer-${avatar.id}`}
+                                          className={`absolute border-2 border-[#1f2937] ${
+                                            avatar.slot === 'hair'
+                                              ? 'h-24 w-24 rounded-[45%_45%_52%_52%]'
+                                              : avatar.slot === 'face'
+                                                ? 'h-8 w-14 rounded-full'
+                                                : avatar.slot === 'clothes'
+                                                  ? 'h-16 w-24 rounded-3xl'
+                                                  : avatar.slot === 'weapon'
+                                                    ? 'h-16 w-3 rounded-full'
+                                                    : avatar.slot === 'cape'
+                                                      ? 'h-20 w-24 rounded-[45%_45%_55%_55%]'
+                                                      : 'h-10 w-10 rounded-full'
+                                          }`}
+                                          style={{
+                                            left: `calc(50% + ${avatar.render_x}px)`,
+                                            top: `calc(50% + ${avatar.render_y}px)`,
+                                            zIndex: avatar.layer_order,
+                                            transform: 'translate(-50%, -50%)',
+                                            backgroundColor: avatar.preview_color ?? '#d9e4ff',
+                                            opacity: avatar.slot === 'effect' ? 0.75 : 1,
+                                          }}
+                                          title={`${avatar.slot} · ${avatar.name}`}
+                                        />
+                                      )
+                                    })}
+                                  </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2">
-                                  <Button
-                                    className="h-10 w-full cursor-pointer"
-                                    disabled={avatarGachaLoading || !canEditBasicProfile}
-                                    onClick={() => void handleDrawAvatarGacha(1)}
-                                  >
-                                    {avatarGachaLoading ? '가챠 진행중...' : '1회 가챠'}
-                                  </Button>
-                                  <Button
-                                    className="h-10 w-full cursor-pointer"
-                                    variant="secondary"
-                                    disabled={avatarGachaLoading || !canEditBasicProfile}
-                                    onClick={() => void handleDrawAvatarGacha(10)}
-                                  >
-                                    10회 가챠
-                                  </Button>
+                                <div className="rounded-md border border-[#dbe7f7] bg-white px-3 py-2 text-xs text-slate-600">
+                                  가챠는 이제 <span className="font-semibold text-[#1d4ed8]">아바타 상점</span> 메뉴에서 진행할 수 있습니다.
                                 </div>
-
-                                {avatarGachaMessage ? (
-                                  <p className="rounded-md border border-[#dbe7f7] bg-white px-2 py-1 text-xs text-[#1d4ed8]">
-                                    {avatarGachaMessage}
-                                  </p>
-                                ) : null}
+                                <Button
+                                  className="h-10 w-full cursor-pointer"
+                                  variant="secondary"
+                                  onClick={() => setActiveMenu('아바타 상점')}
+                                >
+                                  아바타 상점으로 이동
+                                </Button>
                               </div>
 
                               <div className="space-y-3">
@@ -4649,45 +4737,58 @@ function App() {
                                 </div>
 
                                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                  {filteredAvatarItems.map((avatar) => (
-                                    <div
-                                      key={avatar.id}
-                                      className={`border p-3 ${
-                                        avatar.is_equipped
-                                          ? 'border-[#2563eb] bg-[#eaf2ff]'
-                                          : avatar.is_owned
-                                            ? 'border-[#dde8f5] bg-[#f7fbff]'
-                                            : 'border-[#ebeef3] bg-[#f8fafc] opacity-80'
-                                      }`}
-                                    >
-                                      <div className="flex h-24 items-center justify-center border border-[#d3e1f4] bg-white text-xs font-medium text-slate-500">
-                                        {avatar.slot === 'face'
-                                          ? '얼굴 파츠'
-                                          : avatar.slot === 'hair'
-                                            ? '머리 파츠'
-                                            : avatar.slot === 'clothes'
-                                              ? '옷 파츠'
-                                              : avatar.slot === 'weapon'
-                                                ? '무기 파츠'
-                                                : avatar.slot === 'cape'
-                                                  ? '망토 파츠'
-                                                  : '이펙트 파츠'}
-                                      </div>
-                                      <p className="mt-2 font-medium text-slate-900">{avatar.name}</p>
-                                      <p className="text-xs text-slate-500">{avatar.slot} · {avatar.rarity}</p>
-                                      <p className="mt-1 text-xs text-slate-500">
-                                        보너스: 성실 +{avatar.bonus_diligence} / 지력 +{avatar.bonus_intellect}
-                                      </p>
-                                      <Button
-                                        className="mt-2 h-10 w-full cursor-pointer"
-                                        variant={avatar.is_equipped ? 'secondary' : 'default'}
-                                        onClick={() => void handleEquipAvatar(avatar.id)}
-                                        disabled={avatar.is_equipped || !avatar.is_owned || !canEditBasicProfile}
+                                  {filteredAvatarItems.map((avatar) => {
+                                    const avatarSprite = getAvatarPartImage(avatar.slot, avatar.name)
+
+                                    return (
+                                      <div
+                                        key={avatar.id}
+                                        className={`border p-3 ${
+                                          avatar.is_equipped
+                                            ? 'border-[#2563eb] bg-[#eaf2ff]'
+                                            : avatar.is_owned
+                                              ? 'border-[#dde8f5] bg-[#f7fbff]'
+                                              : 'border-[#ebeef3] bg-[#f8fafc] opacity-80'
+                                        }`}
                                       >
-                                        {avatar.is_equipped ? '장착중' : avatar.is_owned ? '장착하기' : '미보유'}
-                                      </Button>
-                                    </div>
-                                  ))}
+                                        <div className="flex h-24 items-center justify-center border border-[#d3e1f4] bg-white text-xs font-medium text-slate-500">
+                                          {avatarSprite ? (
+                                            <img
+                                              src={avatarSprite}
+                                              alt={`${avatar.name} ${avatar.slot}`}
+                                              className="h-20 w-20 object-contain"
+                                              style={{ imageRendering: 'pixelated' }}
+                                            />
+                                          ) : avatar.slot === 'face' ? (
+                                            '얼굴 파츠'
+                                          ) : avatar.slot === 'hair' ? (
+                                            '머리 파츠'
+                                          ) : avatar.slot === 'clothes' ? (
+                                            '옷 파츠'
+                                          ) : avatar.slot === 'weapon' ? (
+                                            '무기 파츠'
+                                          ) : avatar.slot === 'cape' ? (
+                                            '망토 파츠'
+                                          ) : (
+                                            '이펙트 파츠'
+                                          )}
+                                        </div>
+                                        <p className="mt-2 font-medium text-slate-900">{avatar.name}</p>
+                                        <p className="text-xs text-slate-500">{avatar.slot} · {avatar.rarity}</p>
+                                        <p className="mt-1 text-xs text-slate-500">
+                                          보너스: 성실 +{avatar.bonus_diligence} / 지력 +{avatar.bonus_intellect}
+                                        </p>
+                                        <Button
+                                          className="mt-2 h-10 w-full cursor-pointer"
+                                          variant={avatar.is_equipped ? 'secondary' : 'default'}
+                                          onClick={() => void handleEquipAvatar(avatar.id)}
+                                          disabled={avatar.is_equipped || !avatar.is_owned || !canEditBasicProfile}
+                                        >
+                                          {avatar.is_equipped ? '장착중' : avatar.is_owned ? '장착하기' : '미보유'}
+                                        </Button>
+                                      </div>
+                                    )
+                                  })}
                                 </div>
                               </div>
                             </div>
@@ -5381,6 +5482,157 @@ function App() {
                       ) : null}
                     </div>
                   </div>
+                </div>
+              ) : null}
+
+              {activeMenu === '아바타 상점' ? (
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-5">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-heading text-2xl font-semibold text-slate-900">아바타 상점</h3>
+                        <p className="text-sm text-slate-600">학생을 선택해 가챠를 진행하고, 획득한 도감 진행도를 확인하세요.</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={selectedStudentForAvatarShop ?? ''}
+                          onChange={(event) => setSelectedStudentForAvatarShop(Number(event.target.value) || null)}
+                          className="h-11 min-w-[170px] rounded-xl border border-[#c9d9f0] bg-white px-3 text-sm text-slate-900"
+                        >
+                          {avatarShopSelectableStudents.map((student) => (
+                            <option key={student.id} value={student.id}>
+                              {student.student_number}번 {student.name}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="rounded-xl border border-[#c9d9ef] bg-white px-3 py-2 text-sm font-semibold text-[#1e3a8a]">
+                          보유 냥 {Number(selectedAvatarShopStudent?.nyang_balance ?? 0).toLocaleString()}냥
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {avatarShopDetail ? (
+                    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+                      <div className="space-y-3 rounded-2xl border border-[#d8e4f4] bg-[#f7fbff] p-4">
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-slate-900">도감 진행도</p>
+                          <p className="text-xs text-slate-600">
+                            {avatarShopDetail.avatar_collection.owned_items} / {avatarShopDetail.avatar_collection.total_items} 획득
+                            ({avatarShopDetail.avatar_collection.progress_percent}%)
+                          </p>
+                        </div>
+
+                        <div className="h-2 overflow-hidden rounded-full bg-[#dce8f8]">
+                          <div
+                            className="h-full bg-[#2563eb] transition-all duration-300"
+                            style={{ width: `${avatarShopDetail.avatar_collection.progress_percent}%` }}
+                          />
+                        </div>
+
+                        <div className="relative mx-auto flex h-72 w-56 items-center justify-center border border-[#d3e1f4] bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_100%)]">
+                          <div className="relative h-56 w-56">
+                            <img
+                              src="/images/avatars/pixel/base-body.svg"
+                              alt="기본 아바타 바디"
+                              className="absolute inset-0 h-full w-full object-contain"
+                              style={{ imageRendering: 'pixelated' }}
+                            />
+
+                            {avatarShopEquippedLayers.map((avatar) => {
+                              const avatarSprite = getAvatarPartImage(avatar.slot, avatar.name)
+
+                              if (avatarSprite) {
+                                return (
+                                  <img
+                                    key={`avatar-shop-layer-${avatar.id}`}
+                                    src={avatarSprite}
+                                    alt={`${avatar.name} ${avatar.slot}`}
+                                    className="absolute inset-0 h-full w-full object-contain"
+                                    style={{ imageRendering: 'pixelated', zIndex: avatar.layer_order }}
+                                  />
+                                )
+                              }
+
+                              return (
+                                <div
+                                  key={`avatar-shop-layer-${avatar.id}`}
+                                  className="absolute h-10 w-10 rounded-full border-2 border-[#1f2937]"
+                                  style={{
+                                    left: `calc(50% + ${avatar.render_x}px)`,
+                                    top: `calc(50% + ${avatar.render_y}px)`,
+                                    zIndex: avatar.layer_order,
+                                    transform: 'translate(-50%, -50%)',
+                                    backgroundColor: avatar.preview_color ?? '#d9e4ff',
+                                    opacity: avatar.slot === 'effect' ? 0.75 : 1,
+                                  }}
+                                  title={`${avatar.slot} · ${avatar.name}`}
+                                />
+                              )
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            className="h-10 w-full cursor-pointer"
+                            disabled={avatarGachaLoading || !selectedStudentForAvatarShop || !canEditStudentBySession(selectedStudentForAvatarShop)}
+                            onClick={() => void handleDrawAvatarGacha(1, selectedStudentForAvatarShop ?? undefined)}
+                          >
+                            {avatarGachaLoading ? '가챠 진행중...' : '1회 가챠'}
+                          </Button>
+                          <Button
+                            className="h-10 w-full cursor-pointer"
+                            variant="secondary"
+                            disabled={avatarGachaLoading || !selectedStudentForAvatarShop || !canEditStudentBySession(selectedStudentForAvatarShop)}
+                            onClick={() => void handleDrawAvatarGacha(10, selectedStudentForAvatarShop ?? undefined)}
+                          >
+                            10회 가챠
+                          </Button>
+                        </div>
+
+                        {avatarGachaMessage ? (
+                          <p className="rounded-md border border-[#dbe7f7] bg-white px-2 py-1 text-xs text-[#1d4ed8]">
+                            {avatarGachaMessage}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="rounded-2xl border border-[#dbe6f4] bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">기본 도트 아바타 세트</p>
+                        <p className="mt-1 text-xs text-slate-500">얼굴 5종 · 머리 5종 · 옷 2종이 기본 세트로 적용되었습니다.</p>
+                        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                          {[
+                            '/images/avatars/pixel/face-basic-1.svg',
+                            '/images/avatars/pixel/face-basic-2.svg',
+                            '/images/avatars/pixel/face-basic-3.svg',
+                            '/images/avatars/pixel/face-basic-4.svg',
+                            '/images/avatars/pixel/face-basic-5.svg',
+                            '/images/avatars/pixel/hair-basic-1.svg',
+                            '/images/avatars/pixel/hair-basic-2.svg',
+                            '/images/avatars/pixel/hair-basic-3.svg',
+                            '/images/avatars/pixel/hair-basic-4.svg',
+                            '/images/avatars/pixel/hair-basic-5.svg',
+                            '/images/avatars/pixel/clothes-male-default.svg',
+                            '/images/avatars/pixel/clothes-female-default.svg',
+                          ].map((assetPath) => (
+                            <div key={assetPath} className="flex items-center justify-center border border-[#dbe6f4] bg-[#f8fbff] p-2">
+                              <img
+                                src={assetPath}
+                                alt="기본 아바타 도트 파츠"
+                                className="h-16 w-16 object-contain"
+                                style={{ imageRendering: 'pixelated' }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#c8d9ef] bg-white p-6 text-sm text-slate-600">
+                      선택한 학생의 아바타 정보를 불러오는 중입니다.
+                    </div>
+                  )}
                 </div>
               ) : null}
 
