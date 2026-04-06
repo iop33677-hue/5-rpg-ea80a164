@@ -734,6 +734,10 @@ export interface StudentAvatarItem {
   name: string
   rarity: string
   image_url: string | null
+  render_x: number
+  render_y: number
+  layer_order: number
+  preview_color: string | null
   bonus_diligence: number
   bonus_stamina: number
   bonus_intellect: number
@@ -743,6 +747,38 @@ export interface StudentAvatarItem {
   is_owned: boolean
   is_equipped: boolean
   obtained_at: string
+}
+
+export interface AvatarCollectionSummary {
+  total_items: number
+  owned_items: number
+  progress_percent: number
+  slot_total_counts: Record<string, number>
+  slot_owned_counts: Record<string, number>
+  bonus_diligence: number
+  bonus_stamina: number
+  bonus_intellect: number
+  bonus_communication: number
+  bonus_personality: number
+  bonus_leadership: number
+}
+
+export interface AvatarGachaReward {
+  avatar_id: number
+  slot: string
+  name: string
+  rarity: string
+  is_new: boolean
+  duplicate_reward_nyang: number
+}
+
+export interface AvatarGachaDrawResult {
+  student_id: number
+  draw_count: number
+  spent_nyang: number
+  remaining_nyang: number
+  rewards: AvatarGachaReward[]
+  collection_summary: AvatarCollectionSummary
 }
 
 export interface StudentPhotoAsset {
@@ -761,6 +797,7 @@ export interface StudentDetail {
   economy: StudentEconomy
   activities: StudentActivity[]
   avatars: StudentAvatarItem[]
+  avatar_collection: AvatarCollectionSummary
   photos: StudentPhotoAsset[]
   available_titles: TitleDefinition[]
   earned_titles: StudentEarnedTitle[]

@@ -84,6 +84,7 @@ import {
   type ActivityCouponUsage,
   type ActivityCouponUsagePayload,
   type ClassroomOverview,
+  type AvatarGachaDrawResult,
   type CouponLedgerCancelResponse,
   type CouponLedgerEntry,
   type FundingContribution,
@@ -847,6 +848,9 @@ function App() {
   const [studentDetailTab, setStudentDetailTab] = useState<'info' | 'activity' | 'photos' | 'avatar'>('info')
   const [studentDetailLoading, setStudentDetailLoading] = useState(false)
   const [studentDetailError, setStudentDetailError] = useState('')
+  const [avatarSlotFilter, setAvatarSlotFilter] = useState<'all' | 'face' | 'hair' | 'clothes' | 'weapon' | 'cape' | 'effect'>('all')
+  const [avatarGachaLoading, setAvatarGachaLoading] = useState(false)
+  const [avatarGachaMessage, setAvatarGachaMessage] = useState('')
   const [profileNameDraft, setProfileNameDraft] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [savingTitleSelection, setSavingTitleSelection] = useState(false)
@@ -1137,6 +1141,46 @@ function App() {
 
     return studentSessionId === targetStudentId
   }
+
+  const avatarSlotOptions = [
+    { key: 'all', label: '전체' },
+    { key: 'face', label: '얼굴' },
+    { key: 'hair', label: '머리' },
+    { key: 'clothes', label: '옷' },
+    { key: 'weapon', label: '무기' },
+    { key: 'cape', label: '망토' },
+    { key: 'effect', label: '이펙트' },
+  ] as const
+
+  const filteredAvatarItems = useMemo(() => {
+    if (!studentDetail) {
+      return []
+    }
+
+    if (avatarSlotFilter === 'all') {
+      return studentDetail.avatars
+    }
+
+    return studentDetail.avatars.filter((avatar) => avatar.slot === avatarSlotFilter)
+  }, [avatarSlotFilter, studentDetail])
+
+  const equippedAvatarBySlot = useMemo(() => {
+    if (!studentDetail) {
+      return {} as Record<string, StudentDetail['avatars'][number]>
+    }
+
+    return studentDetail.avatars
+      .filter((avatar) => avatar.is_equipped)
+      .reduce<Record<string, StudentDetail['avatars'][number]>>((acc, avatar) => {
+        acc[avatar.slot] = avatar
+        return acc
+      }, {})
+  }, [studentDetail])
+
+  const equippedAvatarLayers = useMemo(() => {
+    return Object.values(equippedAvatarBySlot).sort((a, b) => a.layer_order - b.layer_order)
+  }, [equippedAvatarBySlot])
+
   const sidebarItems = isStudentSession
     ? sidebarMenuItems.filter((item) => item.label !== '학생 로그인')
     : sidebarMenuItems
@@ -3155,6 +3199,39 @@ function App() {
     }
   }
 
+  const handleDrawAvatarGacha = async (drawCount: 1 | 10) => {
+    if (!studentDetail) {
+      return
+    }
+
+    if (!canEditStudentBySession(studentDetail.student.id)) {
+      setAvatarGachaMessage('본인 계정에서만 가챠를 진행할 수 있습니다.')
+      return
+    }
+
+    setAvatarGachaLoading(true)
+    setAvatarGachaMessage('')
+
+    try {
+      const result = await api.post<AvatarGachaDrawResult>(
+        `/classroom/students/${studentDetail.student.id}/avatars/gacha/draw`,
+        { draw_count: drawCount },
+      )
+
+      await loadStudentDetail(studentDetail.student.id)
+
+      const newCount = result.rewards.filter((reward) => reward.is_new).length
+      const duplicateCount = result.rewards.length - newCount
+      setAvatarGachaMessage(
+        `가챠 완료! 신규 ${newCount}개, 중복 ${duplicateCount}개 · 남은 냥 ${result.remaining_nyang.toLocaleString()}`,
+      )
+    } catch {
+      setAvatarGachaMessage('가챠에 실패했습니다. 냥 잔액 또는 네트워크 상태를 확인해 주세요.')
+    } finally {
+      setAvatarGachaLoading(false)
+    }
+  }
+
   const handleOpenStudentPinModal = (student: PublicStudentLoginItem) => {
     setSelectedStudentForPin(student)
     setStudentPinCode('')
@@ -4449,36 +4526,171 @@ function App() {
                         ) : null}
 
                         {studentDetailTab === 'avatar' ? (
-                          <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 sm:p-5">
-                            {studentDetail.avatars.map((avatar) => (
-                              <div
-                                key={avatar.id}
-                                className={`border p-3 ${
-                                  avatar.is_equipped
-                                    ? 'border-[#2563eb] bg-[#eaf2ff]'
-                                    : 'border-[#dde8f5] bg-[#f7fbff]'
-                                }`}
-                              >
-                                <div className="h-32 w-full border border-[#d3e1f4] bg-white">
-                                  {avatar.image_url ? (
-                                    <img src={avatar.image_url} alt={avatar.name} className="h-full w-full object-cover" />
-                                  ) : (
-                                    <div className="flex h-full items-center justify-center text-sm text-slate-400">이미지 없음</div>
-                                  )}
+                          <div className="space-y-4 p-4 sm:p-5">
+                            <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
+                              <div className="space-y-3 border border-[#d8e4f4] bg-[#f7fbff] p-4">
+                                <div className="space-y-1">
+                                  <p className="text-sm font-semibold text-slate-900">아바타 도감 진행도</p>
+                                  <p className="text-xs text-slate-600">
+                                    {studentDetail.avatar_collection.owned_items} / {studentDetail.avatar_collection.total_items} 획득
+                                    ({studentDetail.avatar_collection.progress_percent}%)
+                                  </p>
                                 </div>
-                                <p className="mt-2 font-medium text-slate-900">{avatar.name}</p>
-                                <p className="text-xs text-slate-500">{avatar.slot} · {avatar.rarity}</p>
-                                <p className="mt-1 text-xs text-slate-500">보너스: 성실 +{avatar.bonus_diligence} / 지력 +{avatar.bonus_intellect}</p>
-                                <Button
-                                  className="mt-2 h-10 w-full cursor-pointer"
-                                  variant={avatar.is_equipped ? 'secondary' : 'default'}
-                                  onClick={() => void handleEquipAvatar(avatar.id)}
-                                  disabled={avatar.is_equipped || !canEditBasicProfile}
-                                >
-                                  {avatar.is_equipped ? '장착중' : '장착하기'}
-                                </Button>
+
+                                <div className="h-2 overflow-hidden rounded-full bg-[#dce8f8]">
+                                  <div
+                                    className="h-full bg-[#2563eb] transition-all duration-300"
+                                    style={{ width: `${studentDetail.avatar_collection.progress_percent}%` }}
+                                  />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                                  <p>성실 +{studentDetail.avatar_collection.bonus_diligence}</p>
+                                  <p>체력 +{studentDetail.avatar_collection.bonus_stamina}</p>
+                                  <p>지력 +{studentDetail.avatar_collection.bonus_intellect}</p>
+                                  <p>소통 +{studentDetail.avatar_collection.bonus_communication}</p>
+                                  <p>인성 +{studentDetail.avatar_collection.bonus_personality}</p>
+                                  <p>창의 +{studentDetail.avatar_collection.bonus_leadership}</p>
+                                </div>
+
+                                <div className="relative mx-auto h-72 w-56 border border-[#d3e1f4] bg-[linear-gradient(180deg,#f8fbff_0%,#eef4ff_100%)]">
+                                  <div className="absolute left-1/2 top-12 h-20 w-20 -translate-x-1/2 rounded-full border-2 border-[#1f2937] bg-[#ffe8df]" />
+                                  <div className="absolute left-1/2 top-[7.3rem] h-24 w-[5.5rem] -translate-x-1/2 rounded-3xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
+                                  <div className="absolute left-1/2 top-[13.2rem] h-14 w-[2.2rem] -translate-x-[1.7rem] rounded-b-2xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
+                                  <div className="absolute left-1/2 top-[13.2rem] h-14 w-[2.2rem] translate-x-[-0.1rem] rounded-b-2xl border-2 border-[#1f2937] bg-[#ffd9cd]" />
+
+                                  {equippedAvatarLayers.map((avatar) => (
+                                    <div
+                                      key={`equipped-layer-${avatar.id}`}
+                                      className={`absolute border-2 border-[#1f2937] ${
+                                        avatar.slot === 'hair'
+                                          ? 'h-24 w-24 rounded-[45%_45%_52%_52%]'
+                                          : avatar.slot === 'face'
+                                            ? 'h-8 w-14 rounded-full'
+                                            : avatar.slot === 'clothes'
+                                              ? 'h-16 w-24 rounded-3xl'
+                                              : avatar.slot === 'weapon'
+                                                ? 'h-16 w-3 rounded-full'
+                                                : avatar.slot === 'cape'
+                                                  ? 'h-20 w-24 rounded-[45%_45%_55%_55%]'
+                                                  : 'h-10 w-10 rounded-full'
+                                      }`}
+                                      style={{
+                                        left: `calc(50% + ${avatar.render_x}px)`,
+                                        top: `calc(50% + ${avatar.render_y}px)`,
+                                        zIndex: avatar.layer_order,
+                                        transform: 'translate(-50%, -50%)',
+                                        backgroundColor: avatar.preview_color ?? '#d9e4ff',
+                                        opacity: avatar.slot === 'effect' ? 0.75 : 1,
+                                      }}
+                                      title={`${avatar.slot} · ${avatar.name}`}
+                                    />
+                                  ))}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Button
+                                    className="h-10 w-full cursor-pointer"
+                                    disabled={avatarGachaLoading || !canEditBasicProfile}
+                                    onClick={() => void handleDrawAvatarGacha(1)}
+                                  >
+                                    {avatarGachaLoading ? '가챠 진행중...' : '1회 가챠'}
+                                  </Button>
+                                  <Button
+                                    className="h-10 w-full cursor-pointer"
+                                    variant="secondary"
+                                    disabled={avatarGachaLoading || !canEditBasicProfile}
+                                    onClick={() => void handleDrawAvatarGacha(10)}
+                                  >
+                                    10회 가챠
+                                  </Button>
+                                </div>
+
+                                {avatarGachaMessage ? (
+                                  <p className="rounded-md border border-[#dbe7f7] bg-white px-2 py-1 text-xs text-[#1d4ed8]">
+                                    {avatarGachaMessage}
+                                  </p>
+                                ) : null}
                               </div>
-                            ))}
+
+                              <div className="space-y-3">
+                                <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                                  {avatarSlotOptions.map((slot) => (
+                                    <button
+                                      key={slot.key}
+                                      type="button"
+                                      onClick={() => setAvatarSlotFilter(slot.key)}
+                                      className={`h-10 border px-3 text-xs font-medium transition-colors duration-200 ${
+                                        avatarSlotFilter === slot.key
+                                          ? 'border-[#2563eb] bg-[#eaf2ff] text-[#1d4ed8]'
+                                          : 'border-[#d3e1f4] bg-white text-slate-600 hover:bg-[#f7faff]'
+                                      }`}
+                                    >
+                                      {slot.label}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                  {avatarSlotOptions
+                                    .filter((slot) => slot.key !== 'all')
+                                    .map((slot) => (
+                                      <div key={`equipped-${slot.key}`} className="border border-[#dbe7f7] bg-[#f8fbff] p-2 text-xs">
+                                        <p className="font-semibold text-slate-800">{slot.label}</p>
+                                        <p className="mt-1 text-slate-600">
+                                          {equippedAvatarBySlot[slot.key]?.name ?? '미장착'}
+                                        </p>
+                                        <p className="text-[11px] text-slate-400">
+                                          {studentDetail.avatar_collection.slot_owned_counts[slot.key] ?? 0} /{' '}
+                                          {studentDetail.avatar_collection.slot_total_counts[slot.key] ?? 0}
+                                        </p>
+                                      </div>
+                                    ))}
+                                </div>
+
+                                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                  {filteredAvatarItems.map((avatar) => (
+                                    <div
+                                      key={avatar.id}
+                                      className={`border p-3 ${
+                                        avatar.is_equipped
+                                          ? 'border-[#2563eb] bg-[#eaf2ff]'
+                                          : avatar.is_owned
+                                            ? 'border-[#dde8f5] bg-[#f7fbff]'
+                                            : 'border-[#ebeef3] bg-[#f8fafc] opacity-80'
+                                      }`}
+                                    >
+                                      <div className="flex h-24 items-center justify-center border border-[#d3e1f4] bg-white text-xs font-medium text-slate-500">
+                                        {avatar.slot === 'face'
+                                          ? '얼굴 파츠'
+                                          : avatar.slot === 'hair'
+                                            ? '머리 파츠'
+                                            : avatar.slot === 'clothes'
+                                              ? '옷 파츠'
+                                              : avatar.slot === 'weapon'
+                                                ? '무기 파츠'
+                                                : avatar.slot === 'cape'
+                                                  ? '망토 파츠'
+                                                  : '이펙트 파츠'}
+                                      </div>
+                                      <p className="mt-2 font-medium text-slate-900">{avatar.name}</p>
+                                      <p className="text-xs text-slate-500">{avatar.slot} · {avatar.rarity}</p>
+                                      <p className="mt-1 text-xs text-slate-500">
+                                        보너스: 성실 +{avatar.bonus_diligence} / 지력 +{avatar.bonus_intellect}
+                                      </p>
+                                      <Button
+                                        className="mt-2 h-10 w-full cursor-pointer"
+                                        variant={avatar.is_equipped ? 'secondary' : 'default'}
+                                        onClick={() => void handleEquipAvatar(avatar.id)}
+                                        disabled={avatar.is_equipped || !avatar.is_owned || !canEditBasicProfile}
+                                      >
+                                        {avatar.is_equipped ? '장착중' : avatar.is_owned ? '장착하기' : '미보유'}
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         ) : null}
                       </div>

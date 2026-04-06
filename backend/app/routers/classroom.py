@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -95,6 +96,10 @@ from app.schemas import (
     StudentActivityLogRead,
     StudentAccessCodeUpdate,
     StudentAdminEconomyUpdate,
+    AvatarCollectionSummaryRead,
+    AvatarGachaDrawCreate,
+    AvatarGachaResultRead,
+    AvatarGachaRewardRead,
     StudentAvatarItemRead,
     StudentCouponInventoryRow,
     StudentCreate,
@@ -391,14 +396,24 @@ def _default_title_definitions() -> list[dict[str, object]]:
     ]
 
 
-def _default_avatar_items(student: Student) -> list[dict[str, object]]:
-    return [
+AVATAR_SLOT_ORDER = ["face", "hair", "clothes", "weapon", "cape", "effect"]
+AVATAR_GACHA_COST_NYANG = 120
+
+
+def _base_avatar_catalog(student: Student) -> list[dict[str, object]]:
+    preferred_outfit = "남자용 옷" if student.student_number % 2 else "여자용 옷"
+    obtained_at = datetime.now(UTC).isoformat()
+    catalog: list[dict[str, object]] = [
         {
-            "id": 1,
+            "id": 1001,
             "slot": "face",
-            "name": "기본 얼굴",
+            "name": "기본1",
             "rarity": "일반",
             "image_url": student.avatar_url,
+            "render_x": 0,
+            "render_y": -3,
+            "layer_order": 40,
+            "preview_color": "#fde1da",
             "bonus_diligence": 1,
             "bonus_stamina": 0,
             "bonus_intellect": 1,
@@ -407,37 +422,442 @@ def _default_avatar_items(student: Student) -> list[dict[str, object]]:
             "bonus_leadership": 0,
             "is_owned": True,
             "is_equipped": True,
-            "obtained_at": datetime.now(UTC).isoformat(),
+            "obtained_at": obtained_at,
         },
         {
-            "id": 2,
+            "id": 1002,
             "slot": "face",
-            "name": "집중 모드 얼굴",
+            "name": "기본2",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -3,
+            "layer_order": 40,
+            "preview_color": "#ffd4ca",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 0,
+            "bonus_communication": 0,
+            "bonus_personality": 1,
+            "bonus_leadership": 0,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 1003,
+            "slot": "face",
+            "name": "기본3",
             "rarity": "희귀",
             "image_url": None,
+            "render_x": 0,
+            "render_y": -3,
+            "layer_order": 40,
+            "preview_color": "#f7d0c8",
             "bonus_diligence": 2,
             "bonus_stamina": 1,
             "bonus_intellect": 1,
             "bonus_communication": 0,
             "bonus_personality": 0,
             "bonus_leadership": 1,
-            "is_owned": True,
+            "is_owned": False,
             "is_equipped": False,
-            "obtained_at": datetime.now(UTC).isoformat(),
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 1004,
+            "slot": "face",
+            "name": "기본4",
+            "rarity": "희귀",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -3,
+            "layer_order": 40,
+            "preview_color": "#fcded4",
+            "bonus_diligence": 1,
+            "bonus_stamina": 2,
+            "bonus_intellect": 1,
+            "bonus_communication": 1,
+            "bonus_personality": 0,
+            "bonus_leadership": 0,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 1005,
+            "slot": "face",
+            "name": "기본5",
+            "rarity": "전설",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -3,
+            "layer_order": 40,
+            "preview_color": "#ffe6dc",
+            "bonus_diligence": 3,
+            "bonus_stamina": 2,
+            "bonus_intellect": 2,
+            "bonus_communication": 1,
+            "bonus_personality": 1,
+            "bonus_leadership": 1,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 2001,
+            "slot": "hair",
+            "name": "기본1",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -48,
+            "layer_order": 80,
+            "preview_color": "#dde8ff",
+            "bonus_diligence": 1,
+            "bonus_stamina": 0,
+            "bonus_intellect": 1,
+            "bonus_communication": 0,
+            "bonus_personality": 0,
+            "bonus_leadership": 1,
+            "is_owned": True,
+            "is_equipped": True,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 2002,
+            "slot": "hair",
+            "name": "기본2",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -48,
+            "layer_order": 80,
+            "preview_color": "#ccdaf9",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 1,
+            "bonus_communication": 0,
+            "bonus_personality": 0,
+            "bonus_leadership": 0,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 2003,
+            "slot": "hair",
+            "name": "기본3",
+            "rarity": "희귀",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -48,
+            "layer_order": 80,
+            "preview_color": "#c5caf9",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 2,
+            "bonus_communication": 1,
+            "bonus_personality": 0,
+            "bonus_leadership": 0,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 2004,
+            "slot": "hair",
+            "name": "기본4",
+            "rarity": "희귀",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -48,
+            "layer_order": 80,
+            "preview_color": "#e1ddfb",
+            "bonus_diligence": 2,
+            "bonus_stamina": 0,
+            "bonus_intellect": 2,
+            "bonus_communication": 0,
+            "bonus_personality": 1,
+            "bonus_leadership": 1,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 2005,
+            "slot": "hair",
+            "name": "기본5",
+            "rarity": "전설",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -48,
+            "layer_order": 80,
+            "preview_color": "#f2ddfa",
+            "bonus_diligence": 2,
+            "bonus_stamina": 1,
+            "bonus_intellect": 3,
+            "bonus_communication": 1,
+            "bonus_personality": 1,
+            "bonus_leadership": 1,
+            "is_owned": False,
+            "is_equipped": False,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 3001,
+            "slot": "clothes",
+            "name": "남자용 옷",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": 22,
+            "layer_order": 50,
+            "preview_color": "#7bb4ff",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 0,
+            "bonus_communication": 1,
+            "bonus_personality": 0,
+            "bonus_leadership": 1,
+            "is_owned": preferred_outfit == "남자용 옷",
+            "is_equipped": preferred_outfit == "남자용 옷",
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 3002,
+            "slot": "clothes",
+            "name": "여자용 옷",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": 22,
+            "layer_order": 50,
+            "preview_color": "#f3a3d9",
+            "bonus_diligence": 0,
+            "bonus_stamina": 1,
+            "bonus_intellect": 1,
+            "bonus_communication": 1,
+            "bonus_personality": 1,
+            "bonus_leadership": 0,
+            "is_owned": preferred_outfit == "여자용 옷",
+            "is_equipped": preferred_outfit == "여자용 옷",
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 4001,
+            "slot": "weapon",
+            "name": "연습용 무기",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 38,
+            "render_y": 16,
+            "layer_order": 60,
+            "preview_color": "#b4c7df",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 0,
+            "bonus_communication": 0,
+            "bonus_personality": 0,
+            "bonus_leadership": 1,
+            "is_owned": True,
+            "is_equipped": True,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 5001,
+            "slot": "cape",
+            "name": "연습용 망토",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": -4,
+            "render_y": 8,
+            "layer_order": 20,
+            "preview_color": "#c7d8f2",
+            "bonus_diligence": 1,
+            "bonus_stamina": 1,
+            "bonus_intellect": 0,
+            "bonus_communication": 1,
+            "bonus_personality": 0,
+            "bonus_leadership": 0,
+            "is_owned": True,
+            "is_equipped": True,
+            "obtained_at": obtained_at,
+        },
+        {
+            "id": 6001,
+            "slot": "effect",
+            "name": "기본 반짝임",
+            "rarity": "일반",
+            "image_url": None,
+            "render_x": 0,
+            "render_y": -34,
+            "layer_order": 10,
+            "preview_color": "#ffe7a8",
+            "bonus_diligence": 0,
+            "bonus_stamina": 1,
+            "bonus_intellect": 1,
+            "bonus_communication": 1,
+            "bonus_personality": 1,
+            "bonus_leadership": 0,
+            "is_owned": True,
+            "is_equipped": True,
+            "obtained_at": obtained_at,
         },
     ]
+    return catalog
+
+
+def _normalize_avatar_item(student: Student, item: dict[str, object], fallback: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": int(item.get("id", fallback["id"])),
+        "slot": str(item.get("slot", fallback.get("slot", "face"))),
+        "name": str(item.get("name", fallback.get("name", "아바타"))),
+        "rarity": str(item.get("rarity", fallback.get("rarity", "일반"))),
+        "image_url": item.get("image_url") if isinstance(item.get("image_url"), str) else fallback.get("image_url"),
+        "render_x": int(item.get("render_x", fallback.get("render_x", 0))),
+        "render_y": int(item.get("render_y", fallback.get("render_y", 0))),
+        "layer_order": int(item.get("layer_order", fallback.get("layer_order", 0))),
+        "preview_color": (
+            str(item.get("preview_color"))
+            if isinstance(item.get("preview_color"), str)
+            else (str(fallback.get("preview_color")) if isinstance(fallback.get("preview_color"), str) else None)
+        ),
+        "bonus_diligence": int(item.get("bonus_diligence", fallback.get("bonus_diligence", 0))),
+        "bonus_stamina": int(item.get("bonus_stamina", fallback.get("bonus_stamina", 0))),
+        "bonus_intellect": int(item.get("bonus_intellect", fallback.get("bonus_intellect", 0))),
+        "bonus_communication": int(item.get("bonus_communication", fallback.get("bonus_communication", 0))),
+        "bonus_personality": int(item.get("bonus_personality", fallback.get("bonus_personality", 0))),
+        "bonus_leadership": int(item.get("bonus_leadership", fallback.get("bonus_leadership", 0))),
+        "is_owned": item.get("is_owned") is not False,
+        "is_equipped": item.get("is_equipped") is True,
+        "obtained_at": str(item.get("obtained_at", fallback.get("obtained_at", datetime.now(UTC).isoformat()))),
+    }
+
+
+def _default_avatar_items(student: Student) -> list[dict[str, object]]:
+    return _base_avatar_catalog(student)
 
 
 def _embedded_avatars(student: Student, notes: dict[str, object]) -> list[dict[str, object]]:
-    avatars = notes.get("avatars")
-    if isinstance(avatars, list):
-        normalized: list[dict[str, object]] = [item for item in avatars if isinstance(item, dict)]
-        if normalized:
-            return normalized
+    base_catalog = _base_avatar_catalog(student)
+    base_by_id: dict[int, dict[str, object]] = {int(item["id"]): item for item in base_catalog}
 
-    generated = _default_avatar_items(student)
-    notes["avatars"] = generated
-    return generated
+    avatars = notes.get("avatars")
+    merged: list[dict[str, object]] = []
+
+    if isinstance(avatars, list):
+        for raw_item in avatars:
+            if not isinstance(raw_item, dict):
+                continue
+            item_id = int(raw_item.get("id", -1))
+            fallback = base_by_id.get(item_id, raw_item)
+            merged.append(_normalize_avatar_item(student, raw_item, fallback))
+
+    existing_ids = {int(item.get("id", -1)) for item in merged}
+    for base_item in base_catalog:
+        if int(base_item["id"]) not in existing_ids:
+            merged.append(_normalize_avatar_item(student, base_item, base_item))
+
+    for slot in AVATAR_SLOT_ORDER:
+        slot_items = [item for item in merged if str(item.get("slot", "")) == slot and item.get("is_owned") is not False]
+        equipped_items = [item for item in slot_items if item.get("is_equipped") is True]
+
+        if len(equipped_items) > 1:
+            keep_item = equipped_items[0]
+            for item in equipped_items[1:]:
+                item["is_equipped"] = False
+            keep_item["is_equipped"] = True
+        elif not equipped_items and slot_items:
+            slot_items[0]["is_equipped"] = True
+
+    notes["avatars"] = merged
+    return merged
+
+
+def _avatar_stat_bonus_from_owned(avatars: list[dict[str, object]]) -> dict[str, int]:
+    bonus = {
+        "bonus_diligence": 0,
+        "bonus_stamina": 0,
+        "bonus_intellect": 0,
+        "bonus_communication": 0,
+        "bonus_personality": 0,
+        "bonus_leadership": 0,
+    }
+
+    for item in avatars:
+        if item.get("is_owned") is False:
+            continue
+        for key in bonus:
+            bonus[key] += int(item.get(key, 0))
+
+    return bonus
+
+
+def _build_avatar_collection_summary(avatars: list[dict[str, object]]) -> AvatarCollectionSummaryRead:
+    slot_total_counts = {slot: 0 for slot in AVATAR_SLOT_ORDER}
+    slot_owned_counts = {slot: 0 for slot in AVATAR_SLOT_ORDER}
+
+    for item in avatars:
+        slot = str(item.get("slot", "face"))
+        if slot not in slot_total_counts:
+            slot_total_counts[slot] = 0
+            slot_owned_counts[slot] = 0
+        slot_total_counts[slot] += 1
+        if item.get("is_owned") is not False:
+            slot_owned_counts[slot] += 1
+
+    total_items = len(avatars)
+    owned_items = sum(1 for item in avatars if item.get("is_owned") is not False)
+    progress_percent = int(round((owned_items / total_items) * 100)) if total_items else 0
+    bonus = _avatar_stat_bonus_from_owned(avatars)
+
+    return AvatarCollectionSummaryRead(
+        total_items=total_items,
+        owned_items=owned_items,
+        progress_percent=progress_percent,
+        slot_total_counts=slot_total_counts,
+        slot_owned_counts=slot_owned_counts,
+        bonus_diligence=bonus["bonus_diligence"],
+        bonus_stamina=bonus["bonus_stamina"],
+        bonus_intellect=bonus["bonus_intellect"],
+        bonus_communication=bonus["bonus_communication"],
+        bonus_personality=bonus["bonus_personality"],
+        bonus_leadership=bonus["bonus_leadership"],
+    )
+
+
+def _to_avatar_item_read(student_id: int, item: dict[str, object]) -> StudentAvatarItemRead:
+    obtained_at_raw = str(item.get("obtained_at", datetime.now(UTC).isoformat()))
+    obtained_at = datetime.fromisoformat(obtained_at_raw)
+
+    return StudentAvatarItemRead(
+        id=int(item.get("id", 0)),
+        student_id=student_id,
+        slot=str(item.get("slot", "face")),
+        name=str(item.get("name", "아바타")),
+        rarity=str(item.get("rarity", "일반")),
+        image_url=(str(item.get("image_url")) if isinstance(item.get("image_url"), str) else None),
+        render_x=int(item.get("render_x", 0)),
+        render_y=int(item.get("render_y", 0)),
+        layer_order=int(item.get("layer_order", 0)),
+        preview_color=(str(item.get("preview_color")) if isinstance(item.get("preview_color"), str) else None),
+        bonus_diligence=int(item.get("bonus_diligence", 0)),
+        bonus_stamina=int(item.get("bonus_stamina", 0)),
+        bonus_intellect=int(item.get("bonus_intellect", 0)),
+        bonus_communication=int(item.get("bonus_communication", 0)),
+        bonus_personality=int(item.get("bonus_personality", 0)),
+        bonus_leadership=int(item.get("bonus_leadership", 0)),
+        is_owned=item.get("is_owned") is not False,
+        is_equipped=item.get("is_equipped") is True,
+        obtained_at=obtained_at,
+    )
+
+
+def _pick_avatar_reward(avatars: list[dict[str, object]]) -> dict[str, object]:
+    rarity_weights = {"일반": 70, "희귀": 24, "전설": 6}
+    weighted_pool = [max(1, rarity_weights.get(str(item.get("rarity", "일반")), 1)) for item in avatars]
+    return random.choices(avatars, weights=weighted_pool, k=1)[0]
 
 
 def _embedded_photos(notes: dict[str, object]) -> list[dict[str, object]]:
@@ -1529,15 +1949,15 @@ def _build_activity_timeline(student: Student, notes: dict[str, object], db: Ses
 
 
 def _compute_student_stats(student: Student, avatars: list[dict[str, object]]) -> list[StudentStatRead]:
-    _ = avatars
+    collection_bonus = _avatar_stat_bonus_from_owned(avatars)
 
     stat_values = [
-        ("wisdom", max(0, student.wisdom)),
-        ("creativity", max(0, student.creativity)),
-        ("personality", max(0, student.personality)),
-        ("vitality", max(0, student.vitality)),
-        ("diligence", max(0, student.diligence)),
-        ("communication", max(0, student.communication)),
+        ("wisdom", max(0, student.wisdom + collection_bonus["bonus_intellect"])),
+        ("creativity", max(0, student.creativity + collection_bonus["bonus_leadership"])),
+        ("personality", max(0, student.personality + collection_bonus["bonus_personality"])),
+        ("vitality", max(0, student.vitality + collection_bonus["bonus_stamina"])),
+        ("diligence", max(0, student.diligence + collection_bonus["bonus_diligence"])),
+        ("communication", max(0, student.communication + collection_bonus["bonus_communication"])),
     ]
 
     return [StudentStatRead(key=key, value=value) for key, value in stat_values]
@@ -1920,26 +2340,8 @@ def get_student_detail(
     avatars_raw = _embedded_avatars(student, notes)
     photos_raw = _embedded_photos(notes)
 
-    avatar_items = [
-        StudentAvatarItemRead(
-            id=int(item.get("id", 0)),
-            student_id=student.id,
-            slot=str(item.get("slot", "face")),
-            name=str(item.get("name", "아바타")),
-            rarity=str(item.get("rarity", "일반")),
-            image_url=(str(item.get("image_url")) if isinstance(item.get("image_url"), str) else None),
-            bonus_diligence=int(item.get("bonus_diligence", 0)),
-            bonus_stamina=int(item.get("bonus_stamina", 0)),
-            bonus_intellect=int(item.get("bonus_intellect", 0)),
-            bonus_communication=int(item.get("bonus_communication", 0)),
-            bonus_personality=int(item.get("bonus_personality", 0)),
-            bonus_leadership=int(item.get("bonus_leadership", 0)),
-            is_owned=item.get("is_owned") is not False,
-            is_equipped=item.get("is_equipped") is True,
-            obtained_at=datetime.fromisoformat(str(item.get("obtained_at", datetime.now(UTC).isoformat()))),
-        )
-        for item in avatars_raw
-    ]
+    avatar_items = [_to_avatar_item_read(student.id, item) for item in avatars_raw]
+    avatar_collection = _build_avatar_collection_summary(avatars_raw)
 
     photo_items = [
         StudentPhotoAssetRead(
@@ -1976,6 +2378,7 @@ def get_student_detail(
         economy=_compute_student_economy(student),
         activities=activities,
         avatars=avatar_items,
+        avatar_collection=avatar_collection,
         photos=photo_items,
         available_titles=available_titles,
         earned_titles=earned_titles,
@@ -3104,26 +3507,92 @@ def equip_student_avatar_item(
     _save_notes(student, notes)
     db.commit()
 
-    return [
-        StudentAvatarItemRead(
-            id=int(item.get("id", 0)),
-            student_id=student.id,
-            slot=str(item.get("slot", "face")),
-            name=str(item.get("name", "아바타")),
-            rarity=str(item.get("rarity", "일반")),
-            image_url=(str(item.get("image_url")) if isinstance(item.get("image_url"), str) else None),
-            bonus_diligence=int(item.get("bonus_diligence", 0)),
-            bonus_stamina=int(item.get("bonus_stamina", 0)),
-            bonus_intellect=int(item.get("bonus_intellect", 0)),
-            bonus_communication=int(item.get("bonus_communication", 0)),
-            bonus_personality=int(item.get("bonus_personality", 0)),
-            bonus_leadership=int(item.get("bonus_leadership", 0)),
-            is_owned=item.get("is_owned") is not False,
-            is_equipped=item.get("is_equipped") is True,
-            obtained_at=datetime.fromisoformat(str(item.get("obtained_at", datetime.now(UTC).isoformat()))),
+    return [_to_avatar_item_read(student.id, item) for item in avatars]
+
+
+@router.get("/students/{student_id}/avatars/catalog", response_model=list[StudentAvatarItemRead])
+def get_student_avatar_catalog(
+    student_id: int,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_or_teacher(auth_payload, student_id)
+    student = _ensure_student(student_id, db)
+    notes = _parse_notes(student)
+    avatars = _embedded_avatars(student, notes)
+
+    _save_notes(student, notes)
+    db.commit()
+
+    return [_to_avatar_item_read(student.id, item) for item in avatars]
+
+
+@router.post("/students/{student_id}/avatars/gacha/draw", response_model=AvatarGachaResultRead)
+def draw_student_avatar_gacha(
+    student_id: int,
+    payload: AvatarGachaDrawCreate,
+    db: Session = Depends(get_db),
+    auth_payload: dict[str, object] = Depends(require_auth),
+):
+    _require_student_self_edit_or_teacher(auth_payload, student_id)
+    student = _ensure_student(student_id, db)
+    notes = _parse_notes(student)
+    avatars = _embedded_avatars(student, notes)
+
+    total_cost = AVATAR_GACHA_COST_NYANG * payload.draw_count
+    if student.nyang_balance < total_cost:
+        raise HTTPException(status_code=400, detail="냥이 부족하여 가챠를 진행할 수 없습니다.")
+
+    student.nyang_balance -= total_cost
+    rewards: list[AvatarGachaRewardRead] = []
+
+    for _ in range(payload.draw_count):
+        unowned_pool = [item for item in avatars if item.get("is_owned") is False]
+        draw_pool = unowned_pool if unowned_pool else avatars
+        reward_item = _pick_avatar_reward(draw_pool)
+
+        is_new = reward_item.get("is_owned") is False
+        duplicate_reward_nyang = 0
+        if is_new:
+            reward_item["is_owned"] = True
+            reward_item["obtained_at"] = datetime.now(UTC).isoformat()
+            reward_slot = str(reward_item.get("slot", "face"))
+            has_equipped_in_slot = any(
+                str(item.get("slot", "")) == reward_slot
+                and item.get("is_owned") is not False
+                and item.get("is_equipped") is True
+                for item in avatars
+            )
+            if not has_equipped_in_slot:
+                reward_item["is_equipped"] = True
+        else:
+            reward_rarity = str(reward_item.get("rarity", "일반"))
+            duplicate_reward_nyang = 15 if reward_rarity == "일반" else 40 if reward_rarity == "희귀" else 90
+            student.nyang_balance += duplicate_reward_nyang
+
+        rewards.append(
+            AvatarGachaRewardRead(
+                avatar_id=int(reward_item.get("id", 0)),
+                slot=str(reward_item.get("slot", "face")),
+                name=str(reward_item.get("name", "아바타")),
+                rarity=str(reward_item.get("rarity", "일반")),
+                is_new=is_new,
+                duplicate_reward_nyang=duplicate_reward_nyang,
+            )
         )
-        for item in avatars
-    ]
+
+    notes["avatars"] = avatars
+    _save_notes(student, notes)
+    db.commit()
+
+    return AvatarGachaResultRead(
+        student_id=student.id,
+        draw_count=payload.draw_count,
+        spent_nyang=total_cost,
+        remaining_nyang=student.nyang_balance,
+        rewards=rewards,
+        collection_summary=_build_avatar_collection_summary(avatars),
+    )
 
 
 @router.post("/students", response_model=StudentRead)

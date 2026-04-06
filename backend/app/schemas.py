@@ -267,6 +267,10 @@ class StudentAvatarItemRead(BaseSchema):
     name: str
     rarity: str
     image_url: str | None
+    render_x: int = 0
+    render_y: int = 0
+    layer_order: int = 0
+    preview_color: str | None = None
     bonus_diligence: int
     bonus_stamina: int
     bonus_intellect: int
@@ -276,6 +280,42 @@ class StudentAvatarItemRead(BaseSchema):
     is_owned: bool
     is_equipped: bool
     obtained_at: datetime
+
+
+class AvatarCollectionSummaryRead(BaseSchema):
+    total_items: int
+    owned_items: int
+    progress_percent: int
+    slot_total_counts: dict[str, int]
+    slot_owned_counts: dict[str, int]
+    bonus_diligence: int
+    bonus_stamina: int
+    bonus_intellect: int
+    bonus_communication: int
+    bonus_personality: int
+    bonus_leadership: int
+
+
+class AvatarGachaDrawCreate(BaseSchema):
+    draw_count: int = Field(default=1, ge=1, le=10)
+
+
+class AvatarGachaRewardRead(BaseSchema):
+    avatar_id: int
+    slot: str
+    name: str
+    rarity: str
+    is_new: bool
+    duplicate_reward_nyang: int
+
+
+class AvatarGachaResultRead(BaseSchema):
+    student_id: int
+    draw_count: int
+    spent_nyang: int
+    remaining_nyang: int
+    rewards: list[AvatarGachaRewardRead]
+    collection_summary: AvatarCollectionSummaryRead
 
 
 class StudentPhotoAssetCreate(BaseSchema):
@@ -445,6 +485,7 @@ class StudentDetailRead(BaseSchema):
     economy: StudentEconomyRead
     activities: list[StudentActivityLogRead]
     avatars: list[StudentAvatarItemRead]
+    avatar_collection: AvatarCollectionSummaryRead
     photos: list[StudentPhotoAssetRead]
     available_titles: list[TitleDefinitionRead]
     earned_titles: list[StudentTitleRead]
