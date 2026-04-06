@@ -731,11 +731,15 @@ class LearningBoardPostCreate(BaseSchema):
     student_id: int
     content: str = Field(min_length=1, max_length=3000)
     image_url: str | None = Field(default=None, max_length=600)
+    image_object_key: str | None = Field(default=None, max_length=600)
+    image_original_filename: str | None = Field(default=None, max_length=255)
 
 
 class LearningBoardPostUpdate(BaseSchema):
     content: str | None = Field(default=None, min_length=1, max_length=3000)
     image_url: str | None = Field(default=None, max_length=600)
+    image_object_key: str | None = Field(default=None, max_length=600)
+    image_original_filename: str | None = Field(default=None, max_length=255)
 
 
 class LearningBoardCommentCreate(BaseSchema):
@@ -766,6 +770,8 @@ class LearningBoardPostRead(BaseSchema):
     student_name: str
     content: str
     image_url: str | None
+    image_object_key: str | None
+    image_original_filename: str | None
     like_count: int
     comment_count: int
     liked_by_me: bool

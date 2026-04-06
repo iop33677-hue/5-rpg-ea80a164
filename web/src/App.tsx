@@ -258,6 +258,8 @@ interface LearningBoardFormState {
 interface LearningBoardPostFormState {
   content: string
   image_url: string
+  image_object_key: string
+  image_original_filename: string
 }
 
 interface LearningBoardCommentDraftState {
@@ -555,6 +557,8 @@ const emptyLearningBoardForm: LearningBoardFormState = {
 const emptyLearningBoardPostForm: LearningBoardPostFormState = {
   content: '',
   image_url: '',
+  image_object_key: '',
+  image_original_filename: '',
 }
 
 const sidebarMenuItems: SidebarMenuItem[] = [
@@ -705,6 +709,7 @@ function App() {
   const [learningBoards, setLearningBoards] = useState<LearningBoard[]>([])
   const [selectedLearningBoardId, setSelectedLearningBoardId] = useState<number | null>(null)
   const [learningBoardSort, setLearningBoardSort] = useState<LearningBoardSort>('number')
+  const [learningBoardScreen, setLearningBoardScreen] = useState<'list' | 'detail'>('list')
   const [learningBoardPosts, setLearningBoardPosts] = useState<LearningBoardPost[]>([])
   const [learningBoardForm, setLearningBoardForm] = useState<LearningBoardFormState>(emptyLearningBoardForm)
   const [editingLearningBoardId, setEditingLearningBoardId] = useState<number | null>(null)
@@ -712,6 +717,8 @@ function App() {
   const [learningBoardPostForm, setLearningBoardPostForm] = useState<LearningBoardPostFormState>(emptyLearningBoardPostForm)
   const [editingLearningPostId, setEditingLearningPostId] = useState<number | null>(null)
   const [learningBoardCommentDrafts, setLearningBoardCommentDrafts] = useState<LearningBoardCommentDraftState>({})
+  const [uploadingLearningPostImage, setUploadingLearningPostImage] = useState(false)
+  const learningPostImageInputRef = useRef<HTMLInputElement | null>(null)
   const [activityShopMessage, setActivityShopMessage] = useState('')
   const [learningBoardMessage, setLearningBoardMessage] = useState('')
   const [activityShopLoading, setActivityShopLoading] = useState(false)
@@ -1642,15 +1649,19 @@ function App() {
     }
   }
 
-  const refreshLearningBoardPosts = async (boardId: number): Promise<void> => {
+  const refreshLearningBoardPosts = async (
+    boardId: number,
+    sortOverride?: LearningBoardSort,
+  ): Promise<void> => {
     if (!boardId) {
       setLearningBoardPosts([])
       return
     }
 
+    const activeSort = sortOverride ?? learningBoardSort
     const viewerId = selectedStudentForActivityShop ? `&viewer_student_id=${selectedStudentForActivityShop}` : ''
     const rows = await api.get<LearningBoardPost[]>(
-      `/classroom/learning-boards/${boardId}/posts?sort=${learningBoardSort}${viewerId}`,
+      `/classroom/learning-boards/${boardId}/posts?sort=${activeSort}${viewerId}`,
     )
     setLearningBoardPosts(rows)
   }
@@ -1717,6 +1728,45 @@ function App() {
     }
   }
 
+  const handleUploadLearningBoardPostImage = async (file: File): Promise<void> => {
+    if (!file.type.startsWith('image/')) {
+      setLearningBoardMessage('이미지 파일만 업로드할 수 있습니다.')
+      return
+    }
+
+    setUploadingLearningPostImage(true)
+    setLearningBoardMessage('게시글 이미지를 업로드 중입니다...')
+
+    try {
+      const presign = await api.post<UploadContract>('/runtime-uploads/presign', {
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        category: 'learning-board-post',
+      })
+
+      await fetch(presign.upload_url, {
+        method: 'PUT',
+        headers: presign.headers,
+        body: file,
+      })
+
+      setLearningBoardPostForm((prev) => ({
+        ...prev,
+        image_url: presign.public_url,
+        image_object_key: presign.object_key,
+        image_original_filename: presign.original_filename,
+      }))
+      setLearningBoardMessage('이미지를 첨부했습니다.')
+    } catch {
+      setLearningBoardMessage('이미지 업로드에 실패했습니다.')
+    } finally {
+      setUploadingLearningPostImage(false)
+      if (learningPostImageInputRef.current) {
+        learningPostImageInputRef.current.value = ''
+      }
+    }
+  }
+
   const handleSaveLearningBoardPost = async (): Promise<void> => {
     if (!selectedLearningBoardId || !selectedStudentForActivityShop) {
       setLearningBoardMessage('게시판과 학생을 먼저 선택해 주세요.')
@@ -1735,6 +1785,8 @@ function App() {
         const updatePayload: LearningBoardPostUpdatePayload = {
           content,
           image_url: learningBoardPostForm.image_url.trim() || null,
+          image_object_key: learningBoardPostForm.image_object_key.trim() || null,
+          image_original_filename: learningBoardPostForm.image_original_filename.trim() || null,
         }
         await api.patch<LearningBoardPost>(`/classroom/learning-boards/posts/${editingLearningPostId}`, updatePayload)
         setLearningBoardMessage('게시글을 수정했습니다.')
@@ -1743,14 +1795,17 @@ function App() {
           student_id: selectedStudentForActivityShop,
           content,
           image_url: learningBoardPostForm.image_url.trim() || null,
+          image_object_key: learningBoardPostForm.image_object_key.trim() || null,
+          image_original_filename: learningBoardPostForm.image_original_filename.trim() || null,
         }
         await api.post<LearningBoardPost>(`/classroom/learning-boards/${selectedLearningBoardId}/posts`, payload)
         setLearningBoardMessage('게시글을 등록했습니다.')
       }
 
+      setLearningBoardSort('number')
       setLearningBoardPostForm(emptyLearningBoardPostForm)
       setEditingLearningPostId(null)
-      await refreshLearningBoardPosts(selectedLearningBoardId)
+      await refreshLearningBoardPosts(selectedLearningBoardId, 'number')
       await refreshLearningBoards()
     } catch {
       setLearningBoardMessage('게시글 저장에 실패했습니다.')
@@ -1924,6 +1979,9 @@ function App() {
     if (!authUser || activeMenu !== '학습 게시판') {
       return
     }
+
+    setLearningBoardScreen('list')
+    setLearningBoardSort('number')
 
     const loadBoards = async () => {
       try {
@@ -5356,8 +5414,9 @@ function App() {
                     <div className="rounded-xl border border-[#cfe2f8] bg-[#eef6ff] px-3 py-2 text-sm text-[#1f4d7d]">{learningBoardMessage}</div>
                   ) : null}
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {learningBoards.map((board) => (
+                  {learningBoardScreen === 'list' ? (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {learningBoards.map((board) => (
                       <article key={board.id} className={`rounded-2xl border p-4 shadow-sm ${selectedLearningBoardId === board.id ? 'border-[#7ea8df] bg-[#f6fbff]' : 'border-[#d8e4f2] bg-white'}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -5370,7 +5429,14 @@ function App() {
                         <div className="mt-3 flex items-center justify-between">
                           <button
                             type="button"
-                            onClick={() => setSelectedLearningBoardId(board.id)}
+                            onClick={() => {
+                              setSelectedLearningBoardId(board.id)
+                              setLearningBoardSort('number')
+                              setLearningBoardScreen('detail')
+                              setEditingLearningPostId(null)
+                              setLearningBoardPostForm(emptyLearningBoardPostForm)
+                              setLearningBoardMessage('')
+                            }}
                             className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
                           >
                             게시판 열기
@@ -5397,13 +5463,32 @@ function App() {
                           ) : null}
                         </div>
                       </article>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : null}
 
-                  {selectedLearningBoard ? (
+                  {learningBoardScreen === 'detail' ? (selectedLearningBoard ? (
                     <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h4 className="text-lg font-semibold text-[#173c65]">{selectedLearningBoard.title}</h4>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLearningBoardScreen('list')
+                              setEditingLearningPostId(null)
+                              setLearningBoardPostForm(emptyLearningBoardPostForm)
+                              setLearningBoardMessage('')
+                            }}
+                            className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                            aria-label="게시판 목록으로 돌아가기"
+                          >
+                            <ArrowLeft className="size-4" />
+                          </button>
+                          <div className="min-w-0">
+                            <h4 className="truncate text-lg font-semibold text-[#173c65]">{selectedLearningBoard.title}</h4>
+                            <p className="text-xs text-[#67809f]">글 등록 후 자동으로 번호순으로 정렬됩니다.</p>
+                          </div>
+                        </div>
                         <div className="flex items-center gap-2">
                           <button type="button" onClick={() => setLearningBoardSort('number')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'number' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>번호순</button>
                           <button type="button" onClick={() => setLearningBoardSort('latest')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'latest' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>최신순</button>
@@ -5421,12 +5506,54 @@ function App() {
                         />
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <input
-                            className="h-10 flex-1 min-w-[180px] rounded-xl border border-[#cfdeef] bg-white px-3 text-sm text-[#193654]"
-                            value={learningBoardPostForm.image_url}
-                            onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, image_url: event.target.value }))}
-                            placeholder="이미지 URL (선택)"
+                            ref={learningPostImageInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0]
+                              if (!file) {
+                                return
+                              }
+                              void handleUploadLearningBoardPostImage(file)
+                            }}
                           />
-                          <Button className="h-10 cursor-pointer" onClick={() => void handleSaveLearningBoardPost()} disabled={learningBoardLoading}>
+                          <button
+                            type="button"
+                            onClick={() => learningPostImageInputRef.current?.click()}
+                            className="inline-flex h-10 min-w-[160px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#cfdeef] bg-white px-3 text-sm font-semibold text-[#1f3f66] hover:bg-[#eef5ff]"
+                            disabled={uploadingLearningPostImage || learningBoardLoading}
+                          >
+                            <ImagePlus className="size-4" />
+                            {uploadingLearningPostImage ? '업로드 중...' : '이미지 첨부'}
+                          </button>
+                          {learningBoardPostForm.image_url ? (
+                            <div className="inline-flex h-10 max-w-full items-center gap-2 rounded-xl border border-[#d6e4f5] bg-white px-3 text-xs text-[#4a607c]">
+                              <span className="max-w-[220px] truncate">
+                                {learningBoardPostForm.image_original_filename || '첨부된 이미지'}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label="첨부 이미지 제거"
+                                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-[#d3deee] text-[#5b7393] hover:bg-[#f3f8ff]"
+                                onClick={() => {
+                                  setLearningBoardPostForm((prev) => ({
+                                    ...prev,
+                                    image_url: '',
+                                    image_object_key: '',
+                                    image_original_filename: '',
+                                  }))
+                                }}
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </div>
+                          ) : null}
+                          <Button
+                            className="h-10 cursor-pointer"
+                            onClick={() => void handleSaveLearningBoardPost()}
+                            disabled={learningBoardLoading || uploadingLearningPostImage}
+                          >
                             {editingLearningPostId ? '수정 저장' : '글 작성하기'}
                           </Button>
                           {editingLearningPostId ? (
@@ -5465,6 +5592,8 @@ function App() {
                                         setLearningBoardPostForm({
                                           content: post.content,
                                           image_url: post.image_url ?? '',
+                                          image_object_key: post.image_object_key ?? '',
+                                          image_original_filename: post.image_original_filename ?? '',
                                         })
                                       }}
                                       className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
@@ -5549,7 +5678,7 @@ function App() {
                     <div className="rounded-xl border border-dashed border-[#cadcf1] bg-[#f7fbff] px-4 py-6 text-sm text-[#67809f]">
                       게시판을 선택하면 학생 글과 댓글을 볼 수 있습니다.
                     </div>
-                  )}
+                  )) : null}
                 </div>
               ) : null}
 

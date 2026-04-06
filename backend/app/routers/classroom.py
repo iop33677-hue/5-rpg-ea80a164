@@ -4049,6 +4049,8 @@ def list_learning_board_posts(
             student_name=student.name,
             content=post.content,
             image_url=post.image_url,
+            image_object_key=post.image_object_key,
+            image_original_filename=post.image_original_filename,
             like_count=like_count_map.get(post.id, 0),
             comment_count=comment_count_map.get(post.id, 0),
             liked_by_me=post.id in liked_post_ids,
@@ -4094,6 +4096,8 @@ def create_learning_board_post(
         student_id=student.id,
         content=payload.content,
         image_url=payload.image_url,
+        image_object_key=payload.image_object_key,
+        image_original_filename=payload.image_original_filename,
     )
     db.add(post)
     db.commit()
@@ -4107,6 +4111,8 @@ def create_learning_board_post(
         student_name=student.name,
         content=post.content,
         image_url=post.image_url,
+        image_object_key=post.image_object_key,
+        image_original_filename=post.image_original_filename,
         like_count=0,
         comment_count=0,
         liked_by_me=False,
@@ -4166,6 +4172,8 @@ def update_learning_board_post(
         student_name=student.name,
         content=post.content,
         image_url=post.image_url,
+        image_object_key=post.image_object_key,
+        image_original_filename=post.image_original_filename,
         like_count=int(like_count),
         comment_count=len(comment_rows),
         liked_by_me=False,

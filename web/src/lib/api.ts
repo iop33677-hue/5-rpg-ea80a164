@@ -313,6 +313,8 @@ export interface LearningBoardPost {
   student_name: string
   content: string
   image_url: string | null
+  image_object_key: string | null
+  image_original_filename: string | null
   like_count: number
   comment_count: number
   liked_by_me: boolean
@@ -325,11 +327,15 @@ export interface LearningBoardPostCreatePayload {
   student_id: number
   content: string
   image_url?: string | null
+  image_object_key?: string | null
+  image_original_filename?: string | null
 }
 
 export interface LearningBoardPostUpdatePayload {
   content?: string
   image_url?: string | null
+  image_object_key?: string | null
+  image_original_filename?: string | null
 }
 
 export interface LearningBoardComment {

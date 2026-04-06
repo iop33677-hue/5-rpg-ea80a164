@@ -210,6 +210,8 @@ class LearningBoardPost(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     image_url: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    image_object_key: Mapped[str | None] = mapped_column(String(600), nullable=True)
+    image_original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
