@@ -863,17 +863,19 @@ function App() {
     return (raid.class_current_hp / raid.class_max_hp) * 100
   }, [raid])
 
+  const visibleStudents = useMemo(() => students.filter((student) => student.student_number > 0), [students])
+
   const studentGridSlots = useMemo(() => {
-    const slots: Array<Student | null> = [...students]
+    const slots: Array<Student | null> = [...visibleStudents]
     while (slots.length < 25) {
       slots.push(null)
     }
     return slots
-  }, [students])
+  }, [visibleStudents])
 
   const classToolStudents = useMemo(
-    () => [...students].sort((a, b) => a.student_number - b.student_number),
-    [students],
+    () => [...visibleStudents].sort((a, b) => a.student_number - b.student_number),
+    [visibleStudents],
   )
 
   const remainingDrawStudents = useMemo(
@@ -1012,11 +1014,14 @@ function App() {
   const isStudentDetailView = activeMenu === '학생 목록' && studentDetail !== null
   const normalizedAuthRole = (authUser as User & { role?: string } | null)?.role?.trim().toLowerCase() ?? ''
   const studentSessionId = (authUser as User & { student_id?: number } | null)?.student_id ?? null
-  const isStudentSession = normalizedAuthRole === 'student' || Number.isFinite(studentSessionId)
   const normalizedAuthEmail = (authUser?.email ?? '').trim().toLowerCase()
   const isForcedAdminEmail =
     normalizedAuthEmail === 'admin@arcaneclass.quest' || normalizedAuthEmail === 'iop3367@naver.com'
-  const hasTeacherModeAccess = Boolean(authUser?.id) && !isStudentSession
+  const isExplicitPrivilegedRole =
+    normalizedAuthRole === 'admin' || normalizedAuthRole === 'teacher' || isForcedAdminEmail
+  const isStudentSession =
+    !isExplicitPrivilegedRole && (normalizedAuthRole === 'student' || Number.isFinite(studentSessionId))
+  const hasTeacherModeAccess = Boolean(authUser?.id) && (isExplicitPrivilegedRole || !isStudentSession)
   const roleDisplayLabel =
     normalizedAuthRole === 'admin' || isForcedAdminEmail
       ? '관리자'
@@ -1025,12 +1030,7 @@ function App() {
         : isStudentSession
           ? '학생'
           : '일반'
-  const isPrivilegedUser =
-    !isStudentSession &&
-    (normalizedAuthRole === 'admin' ||
-      normalizedAuthRole === 'teacher' ||
-      isForcedAdminEmail ||
-      hasTeacherModeAccess)
+  const isPrivilegedUser = Boolean(authUser?.id) && (isExplicitPrivilegedRole || hasTeacherModeAccess)
   const canManageClassContent = isPrivilegedUser
   const canEditBasicProfile =
     canManageClassContent ||
@@ -1062,10 +1062,10 @@ function App() {
 
   const activityShopSelectableStudents = useMemo(() => {
     if (isStudentSession && Number.isFinite(studentSessionId)) {
-      return students.filter((student) => student.id === studentSessionId)
+      return visibleStudents.filter((student) => student.id === studentSessionId)
     }
-    return students
-  }, [isStudentSession, studentSessionId, students])
+    return visibleStudents
+  }, [isStudentSession, studentSessionId, visibleStudents])
 
   const selectedActivityStudent = useMemo(() => {
     if (!selectedStudentForActivityShop) {
@@ -1156,8 +1156,18 @@ function App() {
       return parsedAuthLinkedStudentId
     }
 
+    if (hasTeacherModeAccess && selectedStudentForActivityShop) {
+      return selectedStudentForActivityShop
+    }
+
     return null
-  }, [authUser, learningBoardPosts, learningBoardTeacherAuthor?.id])
+  }, [
+    authUser,
+    hasTeacherModeAccess,
+    learningBoardPosts,
+    learningBoardTeacherAuthor?.id,
+    selectedStudentForActivityShop,
+  ])
 
   const selectedFundingProject = useMemo(() => {
     if (!selectedFundingProjectId) {
@@ -1943,10 +1953,14 @@ function App() {
       return
     }
 
-    const targetStudentId = hasTeacherModeAccess ? resolvedLearningBoardTeacherId : selectedStudentForActivityShop
+    const teacherTargetId =
+      resolvedLearningBoardTeacherId ??
+      selectedStudentForActivityShop ??
+      (Number.isFinite(studentSessionId) ? studentSessionId : null)
+    const targetStudentId = hasTeacherModeAccess ? teacherTargetId : selectedStudentForActivityShop
 
     if (!targetStudentId) {
-      setLearningBoardMessage('교사 작성자 계정을 찾지 못했어요. 학생 목록에서 교사 이용호 계정을 확인해 주세요.')
+      setLearningBoardMessage('작성자 계정을 확인할 수 없어 게시글을 저장하지 못했습니다.')
       return
     }
 
@@ -2032,14 +2046,14 @@ function App() {
       return
     }
 
-    const targetStudentId = hasTeacherModeAccess ? resolvedLearningBoardTeacherId : selectedStudentForActivityShop
+    const teacherTargetId =
+      resolvedLearningBoardTeacherId ??
+      selectedStudentForActivityShop ??
+      (Number.isFinite(studentSessionId) ? studentSessionId : null)
+    const targetStudentId = hasTeacherModeAccess ? teacherTargetId : selectedStudentForActivityShop
 
     if (!targetStudentId) {
-      setLearningBoardMessage(
-        hasTeacherModeAccess
-          ? '교사 댓글 작성자 계정을 찾지 못했어요. 학생 목록에서 교사 이용호 계정을 확인해 주세요.'
-          : '학생을 먼저 선택해 주세요.',
-      )
+      setLearningBoardMessage(hasTeacherModeAccess ? '관리자 작성자 계정을 확인할 수 없습니다.' : '학생을 먼저 선택해 주세요.')
       return
     }
 
