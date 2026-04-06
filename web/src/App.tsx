@@ -262,6 +262,13 @@ interface LearningBoardPostFormState {
   image_original_filename: string
 }
 
+interface LearningBoardStudentColumn {
+  studentId: number
+  studentNumber: number
+  studentName: string
+  posts: LearningBoardPost[]
+}
+
 interface LearningBoardCommentDraftState {
   [postId: number]: string
 }
@@ -1076,6 +1083,27 @@ function App() {
     }
     return learningBoards.find((board) => board.id === selectedLearningBoardId) ?? null
   }, [learningBoards, selectedLearningBoardId])
+
+  const learningBoardStudentColumns = useMemo<LearningBoardStudentColumn[]>(() => {
+    const groupedByStudent = new Map<number, LearningBoardStudentColumn>()
+
+    for (const post of learningBoardPosts) {
+      const existingColumn = groupedByStudent.get(post.student_id)
+      if (existingColumn) {
+        existingColumn.posts.push(post)
+        continue
+      }
+
+      groupedByStudent.set(post.student_id, {
+        studentId: post.student_id,
+        studentNumber: post.student_number,
+        studentName: post.student_name,
+        posts: [post],
+      })
+    }
+
+    return Array.from(groupedByStudent.values()).sort((a, b) => a.studentNumber - b.studentNumber)
+  }, [learningBoardPosts])
 
   const selectedCouponForHistory = useMemo(() => {
     if (!couponHistoryCouponId) {
@@ -5468,210 +5496,252 @@ function App() {
                   ) : null}
 
                   {learningBoardScreen === 'detail' ? (selectedLearningBoard ? (
-                    <div className="rounded-2xl border border-[#d8e4f2] bg-white p-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setLearningBoardScreen('list')
-                              setEditingLearningPostId(null)
-                              setLearningBoardPostForm(emptyLearningBoardPostForm)
-                              setLearningBoardMessage('')
-                            }}
-                            className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
-                            aria-label="게시판 목록으로 돌아가기"
-                          >
-                            <ArrowLeft className="size-4" />
-                          </button>
-                          <div className="min-w-0">
-                            <h4 className="truncate text-lg font-semibold text-[#173c65]">{selectedLearningBoard.title}</h4>
-                            <p className="text-xs text-[#67809f]">글 등록 후 자동으로 번호순으로 정렬됩니다.</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button type="button" onClick={() => setLearningBoardSort('number')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'number' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>번호순</button>
-                          <button type="button" onClick={() => setLearningBoardSort('latest')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'latest' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>최신순</button>
-                          <button type="button" onClick={() => setLearningBoardSort('likes')} className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'likes' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}>좋아요순</button>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 rounded-xl border border-[#dbe7f7] bg-[#f8fbff] p-3">
-                        <p className="mb-2 text-xs text-[#5c7594]">{editingLearningPostId ? '게시글 수정' : '새 글 작성'}</p>
-                        <textarea
-                          className="min-h-24 w-full rounded-xl border border-[#cfdeef] bg-white px-3 py-2 text-sm text-[#193654]"
-                          value={learningBoardPostForm.content}
-                          onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, content: event.target.value }))}
-                          placeholder="게시글 내용을 입력하세요"
-                        />
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <input
-                            ref={learningPostImageInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0]
-                              if (!file) {
-                                return
-                              }
-                              void handleUploadLearningBoardPostImage(file)
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => learningPostImageInputRef.current?.click()}
-                            className="inline-flex h-10 min-w-[160px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#cfdeef] bg-white px-3 text-sm font-semibold text-[#1f3f66] hover:bg-[#eef5ff]"
-                            disabled={uploadingLearningPostImage || learningBoardLoading}
-                          >
-                            <ImagePlus className="size-4" />
-                            {uploadingLearningPostImage ? '업로드 중...' : '이미지 첨부'}
-                          </button>
-                          {learningBoardPostForm.image_url ? (
-                            <div className="inline-flex h-10 max-w-full items-center gap-2 rounded-xl border border-[#d6e4f5] bg-white px-3 text-xs text-[#4a607c]">
-                              <span className="max-w-[220px] truncate">
-                                {learningBoardPostForm.image_original_filename || '첨부된 이미지'}
-                              </span>
+                    <div className="fixed inset-0 z-50 bg-[#eff5fd]">
+                      <div className="flex h-full min-h-screen flex-col">
+                        <header className="border-b border-[#d2e2f4] bg-white/95 px-3 py-3 backdrop-blur sm:px-5">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="flex min-w-0 items-center gap-2">
                               <button
                                 type="button"
-                                aria-label="첨부 이미지 제거"
-                                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-[#d3deee] text-[#5b7393] hover:bg-[#f3f8ff]"
                                 onClick={() => {
-                                  setLearningBoardPostForm((prev) => ({
-                                    ...prev,
-                                    image_url: '',
-                                    image_object_key: '',
-                                    image_original_filename: '',
-                                  }))
+                                  setLearningBoardScreen('list')
+                                  setSelectedLearningBoardId(null)
+                                  setLearningBoardPosts([])
+                                  setLearningBoardMessage('')
+                                  setEditingLearningPostId(null)
+                                  setLearningBoardPostForm(emptyLearningBoardPostForm)
                                 }}
+                                className="inline-flex h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                                aria-label="게시판 목록으로 돌아가기"
                               >
-                                <X className="size-3" />
+                                <ArrowLeft className="size-4" />
+                              </button>
+                              <div className="min-w-0">
+                                <h4 className="truncate text-base font-semibold text-[#173c65] sm:text-lg">{selectedLearningBoard.title}</h4>
+                                <p className="text-xs text-[#67809f]">같은 학생의 글은 같은 열에 정렬되며 좌우로 넘겨서 확인할 수 있습니다.</p>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setLearningBoardSort('number')}
+                                className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'number' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}
+                              >
+                                번호순
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLearningBoardSort('latest')}
+                                className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'latest' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}
+                              >
+                                최신순
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setLearningBoardSort('likes')}
+                                className={`h-9 cursor-pointer rounded-full px-3 text-xs font-semibold ${learningBoardSort === 'likes' ? 'bg-[#2563eb] text-white' : 'bg-[#eff4fb] text-[#4a607c]'}`}
+                              >
+                                좋아요순
                               </button>
                             </div>
-                          ) : null}
-                          <Button
-                            className="h-10 cursor-pointer"
-                            onClick={() => void handleSaveLearningBoardPost()}
-                            disabled={learningBoardLoading || uploadingLearningPostImage}
-                          >
-                            {editingLearningPostId ? '수정 저장' : '글 작성하기'}
-                          </Button>
-                          {editingLearningPostId ? (
-                            <Button
-                              variant="outline"
-                              className="h-10 cursor-pointer"
-                              onClick={() => {
-                                setEditingLearningPostId(null)
-                                setLearningBoardPostForm(emptyLearningBoardPostForm)
-                              }}
-                            >
-                              취소
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
+                          </div>
+                        </header>
 
-                      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                        {learningBoardPosts.map((post) => {
-                          const canManagePost = canManageClassContent || (isStudentSession && studentSessionId === post.student_id)
-
-                          return (
-                            <article key={post.id} className="rounded-xl border border-[#dbe7f7] bg-white p-3 shadow-sm">
-                              <div className="flex items-center justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-semibold text-[#173c65]">{post.student_number}번 {post.student_name}</p>
-                                  <p className="text-xs text-[#7890ac]">{new Date(post.created_at).toLocaleString('ko-KR')}</p>
+                        <main className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
+                          <div className="rounded-xl border border-[#dbe7f7] bg-[#f8fbff] p-3">
+                            <p className="mb-2 text-xs text-[#5c7594]">{editingLearningPostId ? '게시글 수정' : '새 글 작성'}</p>
+                            <textarea
+                              className="min-h-24 w-full rounded-xl border border-[#cfdeef] bg-white px-3 py-2 text-sm text-[#193654]"
+                              value={learningBoardPostForm.content}
+                              onChange={(event) => setLearningBoardPostForm((prev) => ({ ...prev, content: event.target.value }))}
+                              placeholder="게시글 내용을 입력하세요"
+                            />
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <input
+                                ref={learningPostImageInputRef}
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0]
+                                  if (!file) {
+                                    return
+                                  }
+                                  void handleUploadLearningBoardPostImage(file)
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => learningPostImageInputRef.current?.click()}
+                                className="inline-flex h-10 min-w-[160px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#cfdeef] bg-white px-3 text-sm font-semibold text-[#1f3f66] hover:bg-[#eef5ff]"
+                                disabled={uploadingLearningPostImage || learningBoardLoading}
+                              >
+                                <ImagePlus className="size-4" />
+                                {uploadingLearningPostImage ? '업로드 중...' : '이미지 첨부'}
+                              </button>
+                              {learningBoardPostForm.image_url ? (
+                                <div className="inline-flex h-10 max-w-full items-center gap-2 rounded-xl border border-[#d6e4f5] bg-white px-3 text-xs text-[#4a607c]">
+                                  <span className="max-w-[220px] truncate">
+                                    {learningBoardPostForm.image_original_filename || '첨부된 이미지'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    aria-label="첨부 이미지 제거"
+                                    className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md border border-[#d3deee] text-[#5b7393] hover:bg-[#f3f8ff]"
+                                    onClick={() => {
+                                      setLearningBoardPostForm((prev) => ({
+                                        ...prev,
+                                        image_url: '',
+                                        image_object_key: '',
+                                        image_original_filename: '',
+                                      }))
+                                    }}
+                                  >
+                                    <X className="size-3" />
+                                  </button>
                                 </div>
-                                {canManagePost ? (
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      type="button"
-                                      aria-label="게시글 수정"
-                                      onClick={() => {
-                                        setEditingLearningPostId(post.id)
-                                        setLearningBoardPostForm({
-                                          content: post.content,
-                                          image_url: post.image_url ?? '',
-                                          image_object_key: post.image_object_key ?? '',
-                                          image_original_filename: post.image_original_filename ?? '',
-                                        })
-                                      }}
-                                      className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
-                                    >
-                                      <Pencil className="size-4" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      aria-label="게시글 삭제"
-                                      onClick={() => void handleDeleteLearningPost(post.id)}
-                                      className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
-                                    >
-                                      <Trash2 className="size-4" />
-                                    </button>
-                                  </div>
-                                ) : null}
-                              </div>
-
-                              <p className="mt-2 whitespace-pre-wrap break-words text-sm text-[#324f71]">{post.content}</p>
-                              {post.image_url ? (
-                                <img src={post.image_url} alt="게시글 이미지" className="mt-3 h-48 w-full rounded-lg object-cover" />
                               ) : null}
-
-                              <div className="mt-3 flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void handleToggleLearningPostLike(post.id)}
-                                  className={`inline-flex h-9 cursor-pointer items-center gap-1 rounded-lg border px-3 text-xs font-semibold ${post.liked_by_me ? 'border-[#f8b4c2] bg-[#fff1f5] text-[#be123c]' : 'border-[#d0dff0] bg-[#f8fbff] text-[#365a80]'}`}
+                              <Button
+                                className="h-10 cursor-pointer"
+                                onClick={() => void handleSaveLearningBoardPost()}
+                                disabled={learningBoardLoading || uploadingLearningPostImage}
+                              >
+                                {editingLearningPostId ? '수정 저장' : '글 작성하기'}
+                              </Button>
+                              {editingLearningPostId ? (
+                                <Button
+                                  variant="outline"
+                                  className="h-10 cursor-pointer"
+                                  onClick={() => {
+                                    setEditingLearningPostId(null)
+                                    setLearningBoardPostForm(emptyLearningBoardPostForm)
+                                  }}
                                 >
-                                  <Heart className="size-4" /> 좋아요 {post.like_count}
-                                </button>
-                                <span className="inline-flex h-9 items-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] px-3 text-xs font-semibold text-[#365a80]">
-                                  <MessageCircleHeart className="mr-1 size-4" /> 댓글 {post.comment_count}
-                                </span>
-                              </div>
+                                  취소
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
 
-                              <div className="mt-3 space-y-2">
-                                {post.comments.slice(0, 4).map((comment) => {
-                                  const canManageComment = canManageClassContent || (isStudentSession && studentSessionId === comment.student_id)
-                                  return (
-                                    <div key={comment.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-xs">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <p className="font-semibold text-[#1f3f66]">{comment.student_number}번 {comment.student_name}</p>
-                                        {canManageComment ? (
-                                          <button
-                                            type="button"
-                                            aria-label="댓글 삭제"
-                                            onClick={() => void handleDeleteLearningComment(comment.id)}
-                                            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
-                                          >
-                                            <Trash2 className="size-3" />
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                      <p className="mt-1 text-[#4e6784]">{comment.content}</p>
-                                    </div>
-                                  )
-                                })}
-                              </div>
+                          {learningBoardPosts.length === 0 ? (
+                            <div className="mt-4 rounded-xl border border-dashed border-[#cadcf1] bg-white px-4 py-6 text-sm text-[#67809f]">
+                              아직 등록된 게시글이 없습니다.
+                            </div>
+                          ) : null}
 
-                              <div className="mt-3 flex items-center gap-2">
-                                <input
-                                  className="h-10 min-w-0 flex-1 rounded-lg border border-[#c9d9f0] px-3 text-sm"
-                                  value={learningBoardCommentDrafts[post.id] ?? ''}
-                                  onChange={(event) => setLearningBoardCommentDrafts((prev) => ({ ...prev, [post.id]: event.target.value }))}
-                                  placeholder="댓글을 입력하세요"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => void handleAddLearningComment(post.id)}
-                                  className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
-                                >
-                                  등록
-                                </button>
-                              </div>
-                            </article>
-                          )
-                        })}
+                          <div className="mt-4 overflow-x-auto pb-2">
+                            <div className="flex min-w-max items-start gap-4">
+                              {learningBoardStudentColumns.map((studentColumn) => (
+                                <section key={studentColumn.studentId} className="w-[320px] shrink-0 rounded-2xl border border-[#d6e4f5] bg-[#f3f8ff] p-3">
+                                  <div className="sticky top-0 z-10 rounded-xl border border-[#cde0f5] bg-white px-3 py-2">
+                                    <p className="text-sm font-semibold text-[#173c65]">{studentColumn.studentNumber}번 {studentColumn.studentName}</p>
+                                    <p className="text-xs text-[#6f87a5]">게시글 {studentColumn.posts.length}개</p>
+                                  </div>
+
+                                  <div className="mt-3 space-y-3">
+                                    {studentColumn.posts.map((post) => {
+                                      const canManagePost = canManageClassContent || (isStudentSession && studentSessionId === post.student_id)
+
+                                      return (
+                                        <article key={post.id} className="rounded-xl border border-[#dbe7f7] bg-white p-3 shadow-sm">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <p className="text-xs text-[#7890ac]">{new Date(post.created_at).toLocaleString('ko-KR')}</p>
+                                            {canManagePost ? (
+                                              <div className="flex items-center gap-1">
+                                                <button
+                                                  type="button"
+                                                  aria-label="게시글 수정"
+                                                  onClick={() => {
+                                                    setEditingLearningPostId(post.id)
+                                                    setLearningBoardPostForm({
+                                                      content: post.content,
+                                                      image_url: post.image_url ?? '',
+                                                      image_object_key: post.image_object_key ?? '',
+                                                      image_original_filename: post.image_original_filename ?? '',
+                                                    })
+                                                  }}
+                                                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] text-[#365a80] hover:bg-[#eef5ff]"
+                                                >
+                                                  <Pencil className="size-4" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  aria-label="게시글 삭제"
+                                                  onClick={() => void handleDeleteLearningPost(post.id)}
+                                                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                                                >
+                                                  <Trash2 className="size-4" />
+                                                </button>
+                                              </div>
+                                            ) : null}
+                                          </div>
+
+                                          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-[#324f71]">{post.content}</p>
+                                          {post.image_url ? (
+                                            <img src={post.image_url} alt="게시글 이미지" className="mt-3 h-48 w-full rounded-lg object-cover" />
+                                          ) : null}
+
+                                          <div className="mt-3 flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleToggleLearningPostLike(post.id)}
+                                              className={`inline-flex h-9 cursor-pointer items-center gap-1 rounded-lg border px-3 text-xs font-semibold ${post.liked_by_me ? 'border-[#f8b4c2] bg-[#fff1f5] text-[#be123c]' : 'border-[#d0dff0] bg-[#f8fbff] text-[#365a80]'}`}
+                                            >
+                                              <Heart className="size-4" /> 좋아요 {post.like_count}
+                                            </button>
+                                            <span className="inline-flex h-9 items-center rounded-lg border border-[#d0dff0] bg-[#f8fbff] px-3 text-xs font-semibold text-[#365a80]">
+                                              <MessageCircleHeart className="mr-1 size-4" /> 댓글 {post.comment_count}
+                                            </span>
+                                          </div>
+
+                                          <div className="mt-3 space-y-2">
+                                            {post.comments.slice(0, 4).map((comment) => {
+                                              const canManageComment = canManageClassContent || (isStudentSession && studentSessionId === comment.student_id)
+                                              return (
+                                                <div key={comment.id} className="rounded-lg border border-[#e3edf8] bg-[#f9fcff] px-3 py-2 text-xs">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <p className="font-semibold text-[#1f3f66]">{comment.student_number}번 {comment.student_name}</p>
+                                                    {canManageComment ? (
+                                                      <button
+                                                        type="button"
+                                                        aria-label="댓글 삭제"
+                                                        onClick={() => void handleDeleteLearningComment(comment.id)}
+                                                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-[#ebd0d7] bg-white text-[#a43b4f] hover:bg-[#fff4f6]"
+                                                      >
+                                                        <Trash2 className="size-3" />
+                                                      </button>
+                                                    ) : null}
+                                                  </div>
+                                                  <p className="mt-1 text-[#4e6784]">{comment.content}</p>
+                                                </div>
+                                              )
+                                            })}
+                                          </div>
+
+                                          <div className="mt-3 flex items-center gap-2">
+                                            <input
+                                              className="h-10 min-w-0 flex-1 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                                              value={learningBoardCommentDrafts[post.id] ?? ''}
+                                              onChange={(event) => setLearningBoardCommentDrafts((prev) => ({ ...prev, [post.id]: event.target.value }))}
+                                              placeholder="댓글을 입력하세요"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleAddLearningComment(post.id)}
+                                              className="h-10 cursor-pointer rounded-lg bg-[#2563eb] px-3 text-sm font-semibold text-white hover:bg-[#1d4ed8]"
+                                            >
+                                              등록
+                                            </button>
+                                          </div>
+                                        </article>
+                                      )
+                                    })}
+                                  </div>
+                                </section>
+                              ))}
+                            </div>
+                          </div>
+                        </main>
                       </div>
                     </div>
                   ) : (
