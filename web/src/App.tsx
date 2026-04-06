@@ -270,6 +270,8 @@ interface LearningBoardStudentColumn {
   posts: LearningBoardPost[]
 }
 
+const LEARNING_BOARD_TEACHER_LABEL = '교사 이용호'
+
 interface LearningBoardCommentDraftState {
   [postId: number]: string
 }
@@ -1072,6 +1074,35 @@ function App() {
     return students.find((student) => student.id === selectedStudentForActivityShop) ?? null
   }, [selectedStudentForActivityShop, students])
 
+  const learningBoardTeacherAuthor = useMemo(() => {
+    const normalizedAuthName = (authUser?.name ?? '').trim().toLowerCase()
+
+    const preferredTeacherNames = ['교사 이용호', '이용호', normalizedAuthName]
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0)
+
+    return (
+      students.find((student) => {
+        const normalizedStudentName = student.name.trim().toLowerCase()
+
+        if (student.student_number <= 0) {
+          return true
+        }
+
+        if (
+          normalizedStudentName.includes('교사') ||
+          normalizedStudentName.includes('선생') ||
+          normalizedStudentName.includes('관리자') ||
+          normalizedStudentName.includes('admin')
+        ) {
+          return true
+        }
+
+        return preferredTeacherNames.some((teacherName) => normalizedStudentName.includes(teacherName.toLowerCase()))
+      }) ?? null
+    )
+  }, [authUser?.name, students])
+
   const selectedFundingProject = useMemo(() => {
     if (!selectedFundingProjectId) {
       return null
@@ -1097,7 +1128,8 @@ function App() {
         normalizedName.includes('교사') ||
         normalizedName.includes('선생') ||
         normalizedName.includes('관리자') ||
-        normalizedName.includes('admin')
+        normalizedName.includes('admin') ||
+        normalizedName.includes('이용호')
 
       const groupingKey = isTeacherPost ? teacherColumnKey : post.student_id
       const existingColumn = groupedByStudent.get(groupingKey)
@@ -1109,7 +1141,7 @@ function App() {
       groupedByStudent.set(groupingKey, {
         studentId: groupingKey,
         studentNumber: isTeacherPost ? 0 : post.student_number,
-        studentName: isTeacherPost ? '교사' : post.student_name,
+        studentName: isTeacherPost ? LEARNING_BOARD_TEACHER_LABEL : post.student_name,
         columnType: isTeacherPost ? 'teacher' : 'student',
         posts: [post],
       })
@@ -1846,8 +1878,17 @@ function App() {
   }
 
   const handleSaveLearningBoardPost = async (): Promise<void> => {
-    if (!selectedLearningBoardId || !selectedStudentForActivityShop) {
-      setLearningBoardMessage('게시판과 학생을 먼저 선택해 주세요.')
+    if (!selectedLearningBoardId) {
+      setLearningBoardMessage('게시판을 먼저 선택해 주세요.')
+      return
+    }
+
+    const targetStudentId = hasTeacherModeAccess
+      ? (learningBoardTeacherAuthor?.id ?? null)
+      : selectedStudentForActivityShop
+
+    if (!targetStudentId) {
+      setLearningBoardMessage('교사 작성자는 교사 이용호로만 등록할 수 있어요. 교사 계정을 먼저 확인해 주세요.')
       return
     }
 
@@ -1870,7 +1911,7 @@ function App() {
         setLearningBoardMessage('게시글을 수정했습니다.')
       } else {
         const payload: LearningBoardPostCreatePayload = {
-          student_id: selectedStudentForActivityShop,
+          student_id: targetStudentId,
           content,
           image_url: learningBoardPostForm.image_url.trim() || null,
           image_object_key: learningBoardPostForm.image_object_key.trim() || null,
@@ -5623,7 +5664,9 @@ function App() {
                                 <section key={studentColumn.studentId} className="w-[320px] shrink-0 rounded-2xl border border-[#d6e4f5] bg-[#f3f8ff] p-3">
                                   <div className="sticky top-0 z-10 rounded-xl border border-[#cde0f5] bg-white px-3 py-2">
                                     <p className="text-sm font-semibold text-[#173c65]">
-            {studentColumn.columnType === 'teacher' ? '교사' : `${studentColumn.studentNumber}번 ${studentColumn.studentName}`}
+            {studentColumn.columnType === 'teacher'
+              ? studentColumn.studentName
+              : `${studentColumn.studentNumber}번 ${studentColumn.studentName}`}
           </p>
                                     <p className="text-xs text-[#6f87a5]">게시글 {studentColumn.posts.length}개</p>
                                   </div>
