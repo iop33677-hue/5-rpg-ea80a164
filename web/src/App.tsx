@@ -154,8 +154,6 @@ interface GrowthStudentReport {
   detail: StudentDetail
   periodActivities: StudentDetail['activities']
   growthScore: number
-  nyangGain: number
-  levelUpsInPeriod: number
   activitySummary: GrowthActivitySummary
   dominantCategory: keyof GrowthActivitySummary
 }
@@ -697,37 +695,6 @@ function formatStopwatch(centiseconds: number): string {
   return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
-const growthExpBrackets: Array<{ startLevel: number; endLevel: number; expPerLevel: number }> = [
-  { startLevel: 1, endLevel: 200, expPerLevel: 20 },
-  { startLevel: 201, endLevel: 400, expPerLevel: 40 },
-  { startLevel: 401, endLevel: 600, expPerLevel: 60 },
-  { startLevel: 601, endLevel: 800, expPerLevel: 80 },
-  { startLevel: 801, endLevel: 999, expPerLevel: 120 },
-]
-
-function growthLevelFromTotalExp(totalExp: number): number {
-  if (totalExp <= 0) return 1
-
-  let expLeft = totalExp
-  let currentLevel = 1
-
-  for (const bracket of growthExpBrackets) {
-    for (let level = bracket.startLevel; level <= bracket.endLevel; level += 1) {
-      if (currentLevel >= 999) {
-        return 999
-      }
-
-      if (expLeft < bracket.expPerLevel) {
-        return currentLevel
-      }
-
-      expLeft -= bracket.expPerLevel
-      currentLevel += 1
-    }
-  }
-
-  return 999
-}
 
 function getGrowthRange(referenceDate: Date, period: GrowthPeriod): { start: Date; end: Date } {
   const base = new Date(referenceDate)
@@ -2549,18 +2516,12 @@ function App() {
                 'mission'
 
               const periodExpNetIncrease = periodActivities.reduce((sum, activity) => sum + activity.reward_exp, 0)
-              const periodNyangGain = periodActivities.reduce((sum, activity) => sum + activity.reward_nyang, 0)
-              const estimatedStartTotalExp = Math.max(0, detail.economy.total_exp - periodExpNetIncrease)
-              const estimatedStartLevel = growthLevelFromTotalExp(estimatedStartTotalExp)
-              const levelUpsInPeriod = Math.max(0, detail.student.level - estimatedStartLevel)
 
               return {
                 student,
                 detail,
                 periodActivities,
                 growthScore: periodExpNetIncrease,
-                nyangGain: periodNyangGain,
-                levelUpsInPeriod,
                 activitySummary,
                 dominantCategory,
               } satisfies GrowthStudentReport
@@ -6198,7 +6159,6 @@ function App() {
                             <th className="px-4 py-3 font-semibold">순위</th>
                             <th className="px-4 py-3 font-semibold">학생 정보</th>
                             <th className="px-4 py-3 font-semibold">성장 점수</th>
-                            <th className="px-4 py-3 font-semibold">냥 획득량</th>
                             <th className="px-4 py-3 font-semibold">활동 내역</th>
                             <th className="px-4 py-3 text-right font-semibold">상세 보기</th>
                           </tr>
@@ -6206,7 +6166,7 @@ function App() {
                         <tbody>
                           {growthLoading ? (
                             <tr>
-                              <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                              <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
                                 성장 리포트를 불러오는 중입니다.
                               </td>
                             </tr>
@@ -6214,7 +6174,7 @@ function App() {
 
                           {!growthLoading && growthError ? (
                             <tr>
-                              <td colSpan={6} className="px-4 py-10 text-center text-[#b42318]">
+                              <td colSpan={5} className="px-4 py-10 text-center text-[#b42318]">
                                 {growthError}
                               </td>
                             </tr>
@@ -6222,7 +6182,7 @@ function App() {
 
                           {!growthLoading && !growthError && growthReports.length === 0 ? (
                             <tr>
-                              <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                              <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
                                 표시할 성장 데이터가 없습니다.
                               </td>
                             </tr>
@@ -6249,18 +6209,11 @@ function App() {
                                       {report.growthScore}
                                     </span>
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <span className="inline-flex items-center rounded-full bg-[#fff7e8] px-3 py-1 text-sm font-semibold text-[#b45309]">
-                                      <Coins className="mr-1 size-4" />
-                                      {report.nyangGain}
-                                    </span>
-                                  </td>
                                   <td className="px-4 py-3 text-xs text-slate-600">
                                     <div className="flex flex-wrap gap-3">
                                       <span>미션 {report.activitySummary.mission}</span>
                                       <span>칭찬 {report.activitySummary.praise_card}</span>
                                       <span>칭호 {report.activitySummary.title}</span>
-                                      <span>레벨업 {report.levelUpsInPeriod}</span>
                                     </div>
                                   </td>
                                   <td className="px-4 py-3 text-right">
@@ -6356,15 +6309,7 @@ function App() {
                   </p>
                   <p className="mt-1 text-xs text-slate-500">선택 기간 순증가 경험치 기준</p>
                 </article>
-                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
-                  <p className="text-xs font-semibold text-slate-500">기간 냥 획득량</p>
-                  <p className="mt-2 flex items-center text-2xl font-bold text-slate-900">
-                    <Coins className="mr-2 size-5 text-[#f59e0b]" />
-                    {selectedGrowthReport.nyangGain}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">레벨업 {selectedGrowthReport.levelUpsInPeriod}회 포함 기간 활동 기준</p>
-                </article>
-                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4 md:col-span-2">
                   <p className="text-xs font-semibold text-slate-500">주요 성장 영역</p>
                   <p className="mt-2 flex items-center text-2xl font-bold text-slate-900">
                     <Sparkles className="mr-2 size-5 text-[#f59e0b]" />
@@ -6432,22 +6377,14 @@ function App() {
                   <Trophy className="size-5 text-[#7c3aed]" />
                   <h4 className="text-lg font-semibold">성장 자원 요약</h4>
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-2">
                   <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
                     <p className="text-xs text-slate-500">누적 EXP</p>
                     <p className="mt-1 text-lg font-semibold text-[#2563eb]">+{selectedGrowthReport.detail.economy.total_exp}</p>
                   </div>
                   <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
-                    <p className="text-xs text-slate-500">기간 냥 획득</p>
-                    <p className="mt-1 text-lg font-semibold text-[#d97706]">+{selectedGrowthReport.nyangGain}</p>
-                  </div>
-                  <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
                     <p className="text-xs text-slate-500">보유 원</p>
                     <p className="mt-1 text-lg font-semibold text-[#16a34a]">{selectedGrowthReport.detail.economy.won}</p>
-                  </div>
-                  <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
-                    <p className="text-xs text-slate-500">보유 냥</p>
-                    <p className="mt-1 text-lg font-semibold text-[#f59e0b]">{selectedGrowthReport.detail.economy.nyang}</p>
                   </div>
                 </div>
               </section>
