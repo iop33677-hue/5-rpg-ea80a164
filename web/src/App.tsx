@@ -1076,14 +1076,17 @@ function App() {
 
   const learningBoardTeacherAuthor = useMemo(() => {
     const normalizedAuthName = (authUser?.name ?? '').trim().toLowerCase()
+    const compactAuthName = normalizedAuthName.replace(/\s+/g, '')
+    const normalizedAuthEmailLocalPart = (authUser?.email?.split('@')[0] ?? '').trim().toLowerCase()
 
-    const preferredTeacherNames = ['교사 이용호', '이용호', normalizedAuthName]
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0)
+    const preferredTeacherNames = ['교사 이용호', '이용호', normalizedAuthName, compactAuthName, normalizedAuthEmailLocalPart]
+      .map((name) => name.trim().toLowerCase())
+      .filter((name, index, source) => name.length > 0 && source.indexOf(name) === index)
 
     return (
       students.find((student) => {
         const normalizedStudentName = student.name.trim().toLowerCase()
+        const compactStudentName = normalizedStudentName.replace(/\s+/g, '')
 
         if (student.student_number <= 0) {
           return true
@@ -1098,10 +1101,45 @@ function App() {
           return true
         }
 
-        return preferredTeacherNames.some((teacherName) => normalizedStudentName.includes(teacherName.toLowerCase()))
+        return preferredTeacherNames.some(
+          (teacherName) =>
+            normalizedStudentName.includes(teacherName) ||
+            compactStudentName.includes(teacherName.replace(/\s+/g, '')),
+        )
       }) ?? null
     )
-  }, [authUser?.name, students])
+  }, [authUser?.email, authUser?.name, students])
+
+  const resolvedLearningBoardTeacherId = useMemo(() => {
+    if (learningBoardTeacherAuthor?.id) {
+      return learningBoardTeacherAuthor.id
+    }
+
+    const teacherLikePost = learningBoardPosts.find((post) => {
+      const normalizedName = post.student_name.trim().toLowerCase()
+      return (
+        post.student_number <= 0 ||
+        normalizedName.includes('교사') ||
+        normalizedName.includes('선생') ||
+        normalizedName.includes('관리자') ||
+        normalizedName.includes('admin') ||
+        normalizedName.includes('이용호')
+      )
+    })
+
+    if (teacherLikePost?.student_id) {
+      return teacherLikePost.student_id
+    }
+
+    const authLinkedStudentId = (authUser as (User & { student_id?: number | string }) | null)?.student_id
+    const parsedAuthLinkedStudentId = Number(authLinkedStudentId)
+
+    if (Number.isInteger(parsedAuthLinkedStudentId) && parsedAuthLinkedStudentId > 0) {
+      return parsedAuthLinkedStudentId
+    }
+
+    return null
+  }, [authUser, learningBoardPosts, learningBoardTeacherAuthor?.id])
 
   const selectedFundingProject = useMemo(() => {
     if (!selectedFundingProjectId) {
@@ -1124,6 +1162,7 @@ function App() {
     for (const post of learningBoardPosts) {
       const normalizedName = post.student_name.trim().toLowerCase()
       const isTeacherPost =
+        post.student_id === resolvedLearningBoardTeacherId ||
         post.student_number <= 0 ||
         normalizedName.includes('교사') ||
         normalizedName.includes('선생') ||
@@ -1162,7 +1201,7 @@ function App() {
 
       return a.studentNumber - b.studentNumber
     })
-  }, [learningBoardPosts])
+  }, [learningBoardPosts, resolvedLearningBoardTeacherId])
 
   const selectedCouponForHistory = useMemo(() => {
     if (!couponHistoryCouponId) {
@@ -1883,12 +1922,10 @@ function App() {
       return
     }
 
-    const targetStudentId = hasTeacherModeAccess
-      ? (learningBoardTeacherAuthor?.id ?? null)
-      : selectedStudentForActivityShop
+    const targetStudentId = hasTeacherModeAccess ? resolvedLearningBoardTeacherId : selectedStudentForActivityShop
 
     if (!targetStudentId) {
-      setLearningBoardMessage('교사 작성자는 교사 이용호로만 등록할 수 있어요. 교사 계정을 먼저 확인해 주세요.')
+      setLearningBoardMessage('교사 작성자 계정을 찾지 못했어요. 학생 목록에서 교사 이용호 계정을 확인해 주세요.')
       return
     }
 
