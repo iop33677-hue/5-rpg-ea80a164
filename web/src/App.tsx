@@ -139,6 +139,24 @@ interface SidebarMenuItem {
 }
 
 type ActivityFilterKey = 'all' | 'mission' | 'praise_card' | 'warning_card' | 'title' | 'raid'
+type GrowthPeriod = 'weekly' | 'monthly' | 'yearly'
+
+interface GrowthActivitySummary {
+  mission: number
+  praise_card: number
+  warning_card: number
+  title: number
+  raid: number
+}
+
+interface GrowthStudentReport {
+  student: Student
+  detail: StudentDetail
+  periodActivities: StudentDetail['activities']
+  growthScore: number
+  activitySummary: GrowthActivitySummary
+  dominantCategory: keyof GrowthActivitySummary
+}
 
 interface TitleIconPreset {
   key: string
@@ -677,6 +695,63 @@ function formatStopwatch(centiseconds: number): string {
   return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
+function getGrowthRange(referenceDate: Date, period: GrowthPeriod): { start: Date; end: Date } {
+  const base = new Date(referenceDate)
+  const start = new Date(base)
+  const end = new Date(base)
+
+  if (period === 'weekly') {
+    const day = base.getDay()
+    const diffToMonday = (day + 6) % 7
+    start.setDate(base.getDate() - diffToMonday)
+    start.setHours(0, 0, 0, 0)
+    end.setDate(start.getDate() + 6)
+    end.setHours(23, 59, 59, 999)
+    return { start, end }
+  }
+
+  if (period === 'monthly') {
+    start.setDate(1)
+    start.setHours(0, 0, 0, 0)
+    end.setMonth(start.getMonth() + 1, 0)
+    end.setHours(23, 59, 59, 999)
+    return { start, end }
+  }
+
+  start.setMonth(0, 1)
+  start.setHours(0, 0, 0, 0)
+  end.setMonth(11, 31)
+  end.setHours(23, 59, 59, 999)
+  return { start, end }
+}
+
+function isWithinGrowthRange(isoDate: string, range: { start: Date; end: Date }): boolean {
+  const target = new Date(isoDate)
+  return target >= range.start && target <= range.end
+}
+
+function formatGrowthRangeLabel(range: { start: Date; end: Date }): string {
+  return `${range.start.toLocaleDateString('ko-KR')} ~ ${range.end.toLocaleDateString('ko-KR')}`
+}
+
+function shiftGrowthReferenceDate(referenceDate: Date, period: GrowthPeriod, direction: 'prev' | 'next'): Date {
+  const next = new Date(referenceDate)
+  const delta = direction === 'prev' ? -1 : 1
+
+  if (period === 'weekly') {
+    next.setDate(next.getDate() + delta * 7)
+    return next
+  }
+
+  if (period === 'monthly') {
+    next.setMonth(next.getMonth() + delta)
+    return next
+  }
+
+  next.setFullYear(next.getFullYear() + delta)
+  return next
+}
+
 const classToolTimerPresets = [3, 5, 10, 20] as const
 
 function App() {
@@ -776,6 +851,14 @@ function App() {
   const [savingTitleSelection, setSavingTitleSelection] = useState(false)
   const [selectedEarnedTitleId, setSelectedEarnedTitleId] = useState<number | null>(null)
   const [activityFilter, setActivityFilter] = useState<ActivityFilterKey>('all')
+  const [growthPeriod, setGrowthPeriod] = useState<GrowthPeriod>('weekly')
+  const [growthReferenceDate, setGrowthReferenceDate] = useState(() => new Date())
+  const [growthSortMode, setGrowthSortMode] = useState<'growth_score' | 'student_number'>('growth_score')
+  const [growthReports, setGrowthReports] = useState<GrowthStudentReport[]>([])
+  const [growthLoading, setGrowthLoading] = useState(false)
+  const [growthError, setGrowthError] = useState('')
+  const [showGrowthDetailModal, setShowGrowthDetailModal] = useState(false)
+  const [selectedGrowthReport, setSelectedGrowthReport] = useState<GrowthStudentReport | null>(null)
   const [classTitles, setClassTitles] = useState<TitleDefinition[]>([])
   const [titleFilterMode, setTitleFilterMode] = useState<TitleAchievementMode>('manual')
   const [titleTabError, setTitleTabError] = useState('')
@@ -864,6 +947,8 @@ function App() {
   }, [raid])
 
   const visibleStudents = useMemo(() => students.filter((student) => student.student_number > 0), [students])
+  const growthRange = useMemo(() => getGrowthRange(growthReferenceDate, growthPeriod), [growthReferenceDate, growthPeriod])
+  const growthRangeLabel = useMemo(() => formatGrowthRangeLabel(growthRange), [growthRange])
 
   const studentGridSlots = useMemo(() => {
     const slots: Array<Student | null> = [...visibleStudents]
@@ -2376,6 +2461,113 @@ function App() {
     })
     setShowAdminEconomyEditor(false)
   }
+
+  const closeGrowthDetailModal = () => {
+    setShowGrowthDetailModal(false)
+    setSelectedGrowthReport(null)
+  }
+
+  const handleOpenGrowthDetail = (report: GrowthStudentReport) => {
+    setSelectedGrowthReport(report)
+    setShowGrowthDetailModal(true)
+  }
+
+  const handleShiftGrowthRange = (direction: 'prev' | 'next') => {
+    setGrowthReferenceDate((prev) => shiftGrowthReferenceDate(prev, growthPeriod, direction))
+  }
+
+  useEffect(() => {
+    if (activeMenu !== '학생 성장 도감') {
+      return
+    }
+
+    let cancelled = false
+
+    const loadGrowthReports = async () => {
+      setGrowthLoading(true)
+      setGrowthError('')
+
+      try {
+        const reports = await Promise.all(
+          visibleStudents.map(async (student) => {
+            try {
+              const detail = await api.get<StudentDetail>(`/classroom/students/${student.id}/detail`)
+              const periodActivities = detail.activities.filter(
+                (activity) => activity.log_type !== 'avatar' && isWithinGrowthRange(activity.created_at, growthRange),
+              )
+
+              const activitySummary: GrowthActivitySummary = {
+                mission: 0,
+                praise_card: 0,
+                warning_card: 0,
+                title: 0,
+                raid: 0,
+              }
+
+              for (const activity of periodActivities) {
+                if (activity.log_type in activitySummary) {
+                  activitySummary[activity.log_type as keyof GrowthActivitySummary] += 1
+                }
+              }
+
+              const dominantCategory =
+                (Object.entries(activitySummary).sort((a, b) => b[1] - a[1])[0]?.[0] as keyof GrowthActivitySummary | undefined) ??
+                'mission'
+
+              return {
+                student,
+                detail,
+                periodActivities,
+                growthScore: detail.economy.total_exp,
+                activitySummary,
+                dominantCategory,
+              } satisfies GrowthStudentReport
+            } catch {
+              return null
+            }
+          }),
+        )
+
+        if (cancelled) {
+          return
+        }
+
+        const validReports = reports.filter((item): item is GrowthStudentReport => item !== null)
+        const sortedReports = [...validReports].sort((a, b) => {
+          if (growthSortMode === 'student_number') {
+            return a.student.student_number - b.student.student_number
+          }
+
+          if (b.growthScore !== a.growthScore) {
+            return b.growthScore - a.growthScore
+          }
+
+          return a.student.student_number - b.student.student_number
+        })
+
+        setGrowthReports(sortedReports)
+
+        if (validReports.length === 0 && visibleStudents.length > 0) {
+          setGrowthError('성장 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.')
+        }
+      } catch {
+        if (!cancelled) {
+          setGrowthError('성장 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.')
+          setGrowthReports([])
+        }
+      } finally {
+        if (!cancelled) {
+          setGrowthLoading(false)
+        }
+      }
+    }
+
+    void loadGrowthReports()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeMenu, growthRange, growthSortMode, visibleStudents])
 
   const handleCreateStudentLoginAccount = async () => {
     setStudentLoginLoading(true)
@@ -5873,7 +6065,175 @@ function App() {
                 </div>
               ) : null}
 
-              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴', '학급 활동 상점', '학습 게시판'].includes(activeMenu) ? (
+              {activeMenu === '학생 성장 도감' ? (
+                <div className="space-y-4">
+                  <section className="rounded-2xl border border-[#cddff3] bg-[#edf4fd] px-4 py-4 sm:px-6">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h3 className="font-heading text-2xl font-semibold text-slate-900">학생 성장 리포트</h3>
+                        <p className="mt-1 text-sm text-slate-600">성장 점수(누적 경험치)와 기간별 활동을 한눈에 확인하세요.</p>
+                      </div>
+
+                      <div className="rounded-2xl border border-[#d1def0] bg-white px-3 py-2">
+                        <p className="text-center text-xs font-semibold text-slate-500">분석 기간</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleShiftGrowthRange('prev')}
+                            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-[#d3deec] text-slate-600 hover:bg-[#f4f8ff]"
+                            aria-label="이전 기간"
+                          >
+                            <ArrowLeft className="size-4" />
+                          </button>
+                          <p className="min-w-[196px] text-center text-sm font-semibold text-slate-800">{growthRangeLabel}</p>
+                          <button
+                            type="button"
+                            onClick={() => handleShiftGrowthRange('next')}
+                            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-[#d3deec] text-slate-600 hover:bg-[#f4f8ff]"
+                            aria-label="다음 기간"
+                          >
+                            <ChevronRight className="size-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                      <div className="inline-flex rounded-xl border border-[#d3def0] bg-white p-1">
+                        {([
+                          { key: 'weekly', label: '주간' },
+                          { key: 'monthly', label: '월간' },
+                          { key: 'yearly', label: '연간' },
+                        ] as const).map((period) => (
+                          <button
+                            key={period.key}
+                            type="button"
+                            onClick={() => setGrowthPeriod(period.key)}
+                            className={`h-10 cursor-pointer rounded-lg px-4 text-sm font-semibold transition-colors duration-200 ${
+                              growthPeriod === period.key
+                                ? 'bg-[#2563eb] text-white'
+                                : 'text-slate-600 hover:bg-[#f3f7ff]'
+                            }`}
+                          >
+                            {period.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-slate-500">정렬:</span>
+                        <button
+                          type="button"
+                          onClick={() => setGrowthSortMode('growth_score')}
+                          className={`inline-flex h-10 cursor-pointer items-center rounded-xl border px-3 font-semibold ${
+                            growthSortMode === 'growth_score'
+                              ? 'border-[#2563eb] bg-[#2563eb] text-white'
+                              : 'border-[#d3deec] bg-white text-slate-700 hover:bg-[#f7faff]'
+                          }`}
+                        >
+                          성장 점수순
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGrowthSortMode('student_number')}
+                          className={`inline-flex h-10 cursor-pointer items-center rounded-xl border px-3 font-semibold ${
+                            growthSortMode === 'student_number'
+                              ? 'border-[#2563eb] bg-[#2563eb] text-white'
+                              : 'border-[#d3deec] bg-white text-slate-700 hover:bg-[#f7faff]'
+                          }`}
+                        >
+                          번호순
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="overflow-hidden rounded-2xl border border-[#d4e1f3] bg-white shadow-sm">
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-left text-sm">
+                        <thead className="bg-[#f5f9ff] text-slate-600">
+                          <tr>
+                            <th className="px-4 py-3 font-semibold">순위</th>
+                            <th className="px-4 py-3 font-semibold">학생 정보</th>
+                            <th className="px-4 py-3 font-semibold">성장 점수</th>
+                            <th className="px-4 py-3 font-semibold">활동 내역</th>
+                            <th className="px-4 py-3 text-right font-semibold">상세 보기</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {growthLoading ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                                성장 리포트를 불러오는 중입니다.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!growthLoading && growthError ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-10 text-center text-[#b42318]">
+                                {growthError}
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!growthLoading && !growthError && growthReports.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-10 text-center text-slate-500">
+                                표시할 성장 데이터가 없습니다.
+                              </td>
+                            </tr>
+                          ) : null}
+
+                          {!growthLoading && !growthError
+                            ? growthReports.map((report, index) => (
+                                <tr key={report.student.id} className="border-t border-[#e4ebf5] text-slate-700">
+                                  <td className="px-4 py-3 font-semibold">{index + 1}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-3">
+                                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#d2deef] bg-[#f7fbff] font-semibold text-slate-700">
+                                        {report.student.student_number}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="truncate font-semibold text-slate-900">{report.student.name}</p>
+                                        <p className="text-xs text-slate-500">Lv.{report.student.level}</p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className="inline-flex items-center rounded-full bg-[#eaf2ff] px-3 py-1 text-sm font-semibold text-[#1d4ed8]">
+                                      <Flame className="mr-1 size-4" />
+                                      {report.growthScore}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-slate-600">
+                                    <div className="flex flex-wrap gap-3">
+                                      <span>미션 {report.activitySummary.mission}</span>
+                                      <span>칭찬 {report.activitySummary.praise_card}</span>
+                                      <span>칭호 {report.activitySummary.title}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenGrowthDetail(report)}
+                                      className="inline-flex h-10 cursor-pointer items-center rounded-xl border border-[#d2deef] bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-[#f6faff]"
+                                    >
+                                      <Search className="mr-1 size-4" />
+                                      상세
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
+              {!['학생 목록', '미션', '칭찬/주의 카드', '문제 던전', '던전 탐험', '칭호', '학생 로그인', '클래스 툴', '학급 활동 상점', '학습 게시판', '학생 성장 도감'].includes(activeMenu) ? (
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
                     <p className="text-xs text-muted-foreground">총 학생</p>
@@ -5909,7 +6269,140 @@ function App() {
             </section>
           </div>
 
-          {showCouponModal ? (
+          {showGrowthDetailModal && selectedGrowthReport ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0b1525]/60 px-4 py-6">
+          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-[#d6def0] bg-[#f8fbff] shadow-[0_24px_60px_rgba(10,37,70,0.33)]">
+            <div className="relative overflow-hidden rounded-t-3xl bg-gradient-to-r from-[#5564ff] via-[#985cff] to-[#ff4f9c] px-5 py-6 text-white sm:px-7">
+              <div className="pointer-events-none absolute inset-0 opacity-20" aria-hidden="true" />
+              <div className="relative z-10 flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/90 text-xl font-bold text-[#4453e5]">
+                    {selectedGrowthReport.student.student_number}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="inline-flex rounded-full bg-white/20 px-2 py-1 text-xs font-semibold">{selectedGrowthReport.student.name}</p>
+                    <h3 className="mt-2 text-xl font-semibold sm:text-2xl">Lv.{selectedGrowthReport.student.level} 성장 상세 리포트</h3>
+                    <p className="mt-1 text-sm text-white/90">{growthRangeLabel}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeGrowthDetailModal}
+                  className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/30 bg-white/10 text-white hover:bg-white/20"
+                  aria-label="성장 상세 닫기"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4 p-4 sm:p-6">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                  <p className="text-xs font-semibold text-slate-500">성장 점수</p>
+                  <p className="mt-2 flex items-center text-2xl font-bold text-slate-900">
+                    <Flame className="mr-2 size-5 text-[#2563eb]" />
+                    {selectedGrowthReport.growthScore}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">누적 경험치 기준</p>
+                </article>
+                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                  <p className="text-xs font-semibold text-slate-500">기간 활동 수</p>
+                  <p className="mt-2 flex items-center text-2xl font-bold text-slate-900">
+                    <Activity className="mr-2 size-5 text-[#7c3aed]" />
+                    {selectedGrowthReport.periodActivities.length}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">{growthPeriod === 'weekly' ? '주간' : growthPeriod === 'monthly' ? '월간' : '연간'} 기록</p>
+                </article>
+                <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                  <p className="text-xs font-semibold text-slate-500">주요 성장 영역</p>
+                  <p className="mt-2 flex items-center text-2xl font-bold text-slate-900">
+                    <Sparkles className="mr-2 size-5 text-[#f59e0b]" />
+                    {selectedGrowthReport.dominantCategory === 'mission'
+                      ? '미션'
+                      : selectedGrowthReport.dominantCategory === 'praise_card'
+                        ? '칭찬'
+                        : selectedGrowthReport.dominantCategory === 'warning_card'
+                          ? '주의'
+                          : selectedGrowthReport.dominantCategory === 'title'
+                            ? '칭호'
+                            : '레이드'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">가장 많이 수행한 활동</p>
+                </article>
+              </div>
+
+              <section className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                <div className="mb-3 flex items-center gap-2 text-slate-900">
+                  <Clock3 className="size-5 text-[#2563eb]" />
+                  <h4 className="text-lg font-semibold">최근 활동 상세</h4>
+                </div>
+
+                {selectedGrowthReport.periodActivities.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-[#d5dfef] bg-[#f8fbff] px-4 py-6 text-sm text-slate-500">
+                    해당 기간에 기록된 활동이 없습니다.
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {(
+                      [
+                        { key: 'mission', label: '완료한 미션 & 퀘스트', tone: 'border-[#d5def5] bg-[#f5f8ff] text-[#314fbd]' },
+                        { key: 'praise_card', label: '받은 칭찬', tone: 'border-[#f5d5e2] bg-[#fff5f9] text-[#c0265e]' },
+                        { key: 'title', label: '획득한 칭호', tone: 'border-[#e7d9fb] bg-[#faf5ff] text-[#7c3aed]' },
+                        { key: 'raid', label: '레이드/도전 기록', tone: 'border-[#d5ede8] bg-[#f2fffb] text-[#0f766e]' },
+                        { key: 'warning_card', label: '주의 기록', tone: 'border-[#fde2d3] bg-[#fff7f2] text-[#c2410c]' },
+                      ] as const
+                    ).map((section) => {
+                      const entries = selectedGrowthReport.periodActivities.filter((activity) => activity.log_type === section.key)
+                      if (entries.length === 0) {
+                        return null
+                      }
+
+                      return (
+                        <div key={section.key} className="space-y-2">
+                          <p className="text-sm font-semibold text-slate-700">{section.label}</p>
+                          <div className="space-y-2">
+                            {entries.map((entry) => (
+                              <article key={entry.id} className={`rounded-xl border px-3 py-3 ${section.tone}`}>
+                                <p className="font-semibold">{entry.title}</p>
+                                <p className="mt-1 text-sm text-slate-600">{entry.description || '상세 설명 없음'}</p>
+                                <p className="mt-2 text-xs text-slate-500">{new Date(entry.created_at).toLocaleString('ko-KR')}</p>
+                              </article>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
+                <div className="mb-3 flex items-center gap-2 text-slate-900">
+                  <Trophy className="size-5 text-[#7c3aed]" />
+                  <h4 className="text-lg font-semibold">성장 자원 요약</h4>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
+                    <p className="text-xs text-slate-500">누적 EXP</p>
+                    <p className="mt-1 text-lg font-semibold text-[#2563eb]">+{selectedGrowthReport.detail.economy.total_exp}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
+                    <p className="text-xs text-slate-500">보유 원</p>
+                    <p className="mt-1 text-lg font-semibold text-[#16a34a]">{selectedGrowthReport.detail.economy.won}</p>
+                  </div>
+                  <div className="rounded-xl bg-[#f7f9ff] px-3 py-3">
+                    <p className="text-xs text-slate-500">보유 냥</p>
+                    <p className="mt-1 text-lg font-semibold text-[#f59e0b]">{selectedGrowthReport.detail.economy.nyang}</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showCouponModal ? (
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#05101dd4] p-4">
               <div className="modal-enter w-full max-w-3xl rounded-2xl border border-[#c8d9ec] bg-white p-5 shadow-[0_24px_50px_rgba(10,37,70,0.26)]">
                 <div className="mb-4 flex items-center justify-between">
