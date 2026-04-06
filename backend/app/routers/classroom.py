@@ -760,6 +760,7 @@ def _add_mission_achiever_records(
                 "description": f"미션 달성 +1회 ({str(mission.get('target_stat_label', '능력치'))} 성장)",
                 "reward_won": max(0, int(mission.get("reward_won", 0))),
                 "reward_nyang": max(0, int(mission.get("reward_nyang", 0))),
+                "reward_exp": max(0, int(mission.get("reward_exp", 0))),
                 "created_at": datetime.now(UTC).isoformat(),
             },
         )
@@ -1024,6 +1025,7 @@ def _apply_card_issue_to_student(
             "description": issued_note or str(card.get("description", "카드 발급 기록")),
             "reward_won": reward_won * direction,
             "reward_nyang": reward_nyang * direction,
+            "reward_exp": reward_exp * direction,
             "created_at": datetime.now(UTC).isoformat(),
         },
     )
@@ -1450,6 +1452,7 @@ def _build_activity_timeline(student: Student, notes: dict[str, object], db: Ses
                 ),
                 reward_won=int(activity.get("reward_won", 0)),
                 reward_nyang=int(activity.get("reward_nyang", 0)),
+                reward_exp=int(activity.get("reward_exp", 0)),
                 created_at=created_at,
             )
         )
@@ -1474,6 +1477,7 @@ def _build_activity_timeline(student: Student, notes: dict[str, object], db: Ses
                 description="카드 발급 기록",
                 reward_won=event.stat_delta if event.event_type == "praise" else 0,
                 reward_nyang=max(0, event.level_delta * 2),
+                reward_exp=event.stat_delta if event.event_type == "praise" else -event.stat_delta,
                 created_at=event.created_at,
             )
         )
@@ -1491,6 +1495,7 @@ def _build_activity_timeline(student: Student, notes: dict[str, object], db: Ses
                 description=unlocked.awarded_reason or unlocked.condition_text,
                 reward_won=0,
                 reward_nyang=0,
+                reward_exp=0,
                 created_at=unlocked.awarded_at,
             )
         )
@@ -1514,6 +1519,7 @@ def _build_activity_timeline(student: Student, notes: dict[str, object], db: Ses
                 description=action.message,
                 reward_won=max(0, action.damage),
                 reward_nyang=max(0, action.healing),
+                reward_exp=0,
                 created_at=action.created_at,
             )
         )
@@ -2032,6 +2038,7 @@ def create_student_activity(
             "description": payload.description,
             "reward_won": payload.reward_won,
             "reward_nyang": payload.reward_nyang,
+            "reward_exp": payload.reward_exp,
             "created_at": datetime.now(UTC).isoformat(),
         },
     )
@@ -2063,6 +2070,7 @@ def create_student_activity(
         description=payload.description,
         reward_won=payload.reward_won,
         reward_nyang=payload.reward_nyang,
+        reward_exp=payload.reward_exp,
         created_at=datetime.now(UTC),
     )
 
@@ -2493,6 +2501,7 @@ def _issue_title_to_students(
                 ),
                 "reward_won": reward_won,
                 "reward_nyang": 0,
+                "reward_exp": reward_exp,
                 "created_at": awarded_at_iso,
             },
         )

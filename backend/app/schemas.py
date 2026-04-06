@@ -163,6 +163,7 @@ class StudentActivityLogRead(BaseSchema):
     description: str | None
     reward_won: int
     reward_nyang: int
+    reward_exp: int
     created_at: datetime
 
 
@@ -172,6 +173,7 @@ class StudentActivityCreate(BaseSchema):
     description: str | None = Field(default=None, max_length=280)
     reward_won: int = Field(default=0, ge=0)
     reward_nyang: int = Field(default=0, ge=0)
+    reward_exp: int = Field(default=0)
 
 
 class MissionAchieverRead(BaseSchema):

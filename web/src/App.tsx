@@ -2514,11 +2514,13 @@ function App() {
                 (Object.entries(activitySummary).sort((a, b) => b[1] - a[1])[0]?.[0] as keyof GrowthActivitySummary | undefined) ??
                 'mission'
 
+              const periodExpNetIncrease = periodActivities.reduce((sum, activity) => sum + activity.reward_exp, 0)
+
               return {
                 student,
                 detail,
                 periodActivities,
-                growthScore: detail.economy.total_exp,
+                growthScore: periodExpNetIncrease,
                 activitySummary,
                 dominantCategory,
               } satisfies GrowthStudentReport
@@ -6071,7 +6073,7 @@ function App() {
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
                         <h3 className="font-heading text-2xl font-semibold text-slate-900">학생 성장 리포트</h3>
-                        <p className="mt-1 text-sm text-slate-600">성장 점수(누적 경험치)와 기간별 활동을 한눈에 확인하세요.</p>
+                        <p className="mt-1 text-sm text-slate-600">성장 점수(기간 순증가 경험치)와 기간별 활동을 한눈에 확인하세요.</p>
                       </div>
 
                       <div className="rounded-2xl border border-[#d1def0] bg-white px-3 py-2">
@@ -6304,7 +6306,7 @@ function App() {
                     <Flame className="mr-2 size-5 text-[#2563eb]" />
                     {selectedGrowthReport.growthScore}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">누적 경험치 기준</p>
+                  <p className="mt-1 text-xs text-slate-500">선택 기간 순증가 경험치 기준</p>
                 </article>
                 <article className="rounded-2xl border border-[#d7e2f2] bg-white p-4">
                   <p className="text-xs font-semibold text-slate-500">기간 활동 수</p>

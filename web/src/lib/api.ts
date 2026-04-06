@@ -514,6 +514,7 @@ export interface StudentActivity {
   description: string | null
   reward_won: number
   reward_nyang: number
+  reward_exp: number
   created_at: string
 }
 
