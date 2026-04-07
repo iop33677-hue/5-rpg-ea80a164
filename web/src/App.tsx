@@ -115,6 +115,8 @@ import {
   type StudentDetail,
   type StudentEconomyUpdatePayload,
   type StudentCouponInventoryRow,
+  type QuizSessionDetail,
+  type QuizLeaderboardResponse,
   type StudentLoginAccount,
   type StudentTitleRecipient,
   type TitleAchievementMode,
@@ -813,6 +815,11 @@ function App() {
   const [activityShopLoading, setActivityShopLoading] = useState(false)
   const [learningBoardLoading, setLearningBoardLoading] = useState(false)
   const [questions, setQuestions] = useState<QuestionItem[]>([])
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<number[]>([])
+  const [quizCreating, setQuizCreating] = useState(false)
+  const [quizTimeLimit, setQuizTimeLimit] = useState(30)
+  const [quizSession, setQuizSession] = useState<QuizSessionDetail | null>(null)
+  const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardResponse | null>(null)
   const [raid, setRaid] = useState<RaidSession | null>(null)
   const [raidLogs, setRaidLogs] = useState<RaidAction[]>([])
   const [loadingDashboard, setLoadingDashboard] = useState(false)
@@ -3787,6 +3794,48 @@ function App() {
     await refreshTeacherData()
   }
 
+  const handleCreateQuizSession = async () => {
+    if (selectedQuestionIds.length === 0) {
+      setUploadMessage('퀴즈에 출제할 문제를 1개 이상 선택해 주세요.')
+      return
+    }
+
+    setQuizCreating(true)
+    try {
+      await api.post('/quiz/sessions', {
+        title: '오늘의 문제 던전 퀴즈',
+        question_ids: selectedQuestionIds,
+        time_limit: quizTimeLimit
+      })
+      setSelectedQuestionIds([])
+      await refreshTeacherData()
+    } catch {
+      setUploadMessage('퀴즈 방 개설에 실패했습니다.')
+    } finally {
+      setQuizCreating(false)
+    }
+  }
+
+  const updateQuizState = async (status: string, currentQuestionIndex: number, isQuestionOpen: boolean) => {
+    if (!quizSession) return;
+    try {
+      await api.post(`/quiz/sessions/${quizSession.session.id}/state?status=${status}&current_question_index=${currentQuestionIndex}&is_question_open=${isQuestionOpen}`);
+      await refreshTeacherData();
+    } catch {
+      setUploadMessage('상태 변경에 실패했습니다.');
+    }
+  }
+
+  const fetchQuizLeaderboard = async () => {
+    if (!quizSession) return;
+    try {
+      const lb = await api.get<QuizLeaderboardResponse>(`/quiz/sessions/${quizSession.session.id}/leaderboard`);
+      setQuizLeaderboard(lb);
+    } catch {
+      console.error('Failed to fetch leaderboard');
+    }
+  }
+
 
   const uploadQuestionFile = async (file: File) => {
     setUploadMessage('업로드 준비 중...')
@@ -5171,33 +5220,280 @@ function App() {
               ) : null}
 
               {activeMenu === '문제 던전' ? (
-                <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                  <h3 className="mb-3 flex items-center gap-2 font-heading text-lg font-semibold"><FileSpreadsheet className="size-4" /> 문제 은행 업로드 (CSV/XLSX)</h3>
-                  <label className="flex h-36 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-secondary/30 p-4 text-center transition-colors duration-200 hover:bg-secondary/50">
-                    <Upload className="mb-2 size-5 text-primary" />
-                    <span className="text-sm font-medium">파일을 선택하거나 드래그해서 업로드하세요</span>
-                    <span className="text-xs text-muted-foreground">권장 컬럼: subject, unit_name, prompt, answer, difficulty, bonus_attack</span>
-                    <input
-                      type="file"
-                      accept=".csv,.xlsx"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        if (file) {
-                          void uploadQuestionFile(file)
-                        }
-                      }}
-                    />
-                  </label>
-                  {uploadMessage ? <p className="mt-2 text-sm text-primary">{uploadMessage}</p> : null}
-                  <div className="mt-4 grid gap-2 md:grid-cols-2">
-                    {questions.slice(0, 6).map((question) => (
-                      <div key={question.id} className="rounded-xl border border-border px-3 py-2 text-sm">
-                        <p className="font-medium">[{question.subject}] {question.prompt}</p>
-                        <p className="text-xs text-muted-foreground">정답: {question.answer} · 공격 보너스 +{question.bonus_attack}</p>
+                <div className="space-y-4">
+                  {quizSession ? (
+                    <div className="rounded-2xl border border-[#3e4a82] bg-gradient-to-br from-[#1b274c] to-[#201d4a] p-6 text-white shadow-xl">
+                      <div className="mb-4 flex items-center justify-between">
+                        <h3 className="font-heading text-2xl font-bold">문제 던전 (진행 중)</h3>
+                        <div className="rounded-xl bg-black/30 px-4 py-2 font-mono text-3xl font-bold tracking-[0.2em] text-[#ffdf6c]">
+                          PIN: {quizSession.session.pin_code}
+                        </div>
                       </div>
-                    ))}
-                  </div>
+
+                      {quizSession.session.status === 'lobby' ? (
+                        <div className="space-y-6">
+                          <p className="text-center text-xl text-[#a3b8d1]">학생들이 접속하기를 기다리고 있습니다...</p>
+                          <div className="rounded-xl border border-white/20 bg-black/20 p-4">
+                            <p className="mb-3 text-sm font-semibold text-[#96abdb]">참여자 ({quizSession.participants.length}명)</p>
+                            <div className="flex flex-wrap gap-2">
+                              {quizSession.participants.map(p => (
+                                <span key={p.id} className="rounded-full bg-[#3c6bba] px-3 py-1 text-sm font-semibold">{p.student_number}번 {p.student_name}</span>
+                              ))}
+                            </div>
+                          </div>
+                          {canManageClassContent ? (
+                            <Button className="h-12 w-full cursor-pointer bg-[#3169b8] text-lg font-bold hover:bg-[#255294]" onClick={() => updateQuizState('playing', 0, true)}>
+                              던전(퀴즈) 시작하기
+                            </Button>
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-white/30 bg-black/20 p-6 text-center text-indigo-200">
+                              <p className="text-lg">선생님이 퀴즈를 시작할 때까지 대기해 주세요.</p>
+                            </div>
+                          )}
+                        </div>
+                      ) : quizSession.session.status === 'playing' ? (
+                        <div className="space-y-6">
+                          <div className="flex justify-between">
+                            <span className="rounded-full bg-white/20 px-3 py-1 text-sm font-semibold">문제 {quizSession.session.current_question_index + 1} / {quizSession.questions.length}</span>
+                            <span className="rounded-full bg-white/20 px-3 py-1 text-sm font-semibold text-[#ffdf6c]">{quizSession.session.is_question_open ? '응답 진행 중' : '응답 종료 (정답 확인)'}</span>
+                          </div>
+                          
+                          <div className="rounded-2xl bg-white/10 p-6 text-center">
+                            <p className="text-3xl font-bold">{canManageClassContent ? quizSession.questions[quizSession.session.current_question_index]?.prompt : '선생님 화면의 문제를 보고 풀어주세요!'}</p>
+                          </div>
+                          
+                          {!quizSession.session.is_question_open && quizSession.questions[quizSession.session.current_question_index] ? (
+                            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-900/40 p-4 text-center">
+                              <p className="text-sm text-[#74e3b1]">정답</p>
+                              <p className="text-2xl font-bold text-[#4ade80]">{quizSession.questions[quizSession.session.current_question_index].answer}</p>
+                            </div>
+                          ) : null}
+
+                          {canManageClassContent ? (
+                            <div className="flex gap-4">
+                              {quizSession.session.is_question_open ? (
+                                <Button className="h-12 flex-1 cursor-pointer bg-[#da3c56] text-lg font-bold hover:bg-[#b02941]" onClick={() => { updateQuizState('playing', quizSession.session.current_question_index, false); fetchQuizLeaderboard(); }}>
+                                  마감 및 정답 공개
+                                </Button>
+                              ) : (
+                                quizSession.session.current_question_index < quizSession.questions.length - 1 ? (
+                                  <Button className="h-12 flex-1 cursor-pointer bg-[#3169b8] text-lg font-bold hover:bg-[#255294]" onClick={() => updateQuizState('playing', quizSession.session.current_question_index + 1, true)}>
+                                    다음 문제로
+                                  </Button>
+                                ) : (
+                                  <Button className="h-12 flex-1 cursor-pointer bg-[#1e8a5b] text-lg font-bold hover:bg-[#156e48]" onClick={() => { updateQuizState('finished', quizSession.session.current_question_index, false); fetchQuizLeaderboard(); }}>
+                                    퀴즈 종료 및 최종 결과 보기
+                                  </Button>
+                                )
+                              )}
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl bg-black/20 p-6 text-center">
+                              {quizSession.session.is_question_open ? (
+                                <div className="space-y-4">
+                                  <p className="text-lg font-semibold text-indigo-300">정답을 입력하세요</p>
+                                  <input 
+                                    type="text" 
+                                    id="student-answer-input"
+                                    className="h-14 w-full rounded-xl border border-indigo-400 bg-indigo-950 px-4 text-center text-xl font-bold text-white placeholder:text-indigo-300"
+                                    placeholder="정답 입력"
+                                  />
+                                  <Button 
+                                    className="h-14 w-full bg-indigo-600 text-lg font-bold hover:bg-indigo-700"
+                                    onClick={async () => {
+                                      const input = document.getElementById('student-answer-input') as HTMLInputElement;
+                                      if (!input?.value) return;
+                                      try {
+                                        await api.post(`/quiz/questions/${quizSession.questions[quizSession.session.current_question_index].id}/submit?access_code=${studentDetail?.student.access_code || ''}`, {
+                                          submitted_answer: input.value,
+                                          response_time_ms: 5000 // Mock time
+                                        });
+                                        setUploadMessage('제출 완료! 다른 학생들을 기다려주세요.');
+                                        input.disabled = true;
+                                      } catch {
+                                        setUploadMessage('제출 실패 또는 이미 제출했습니다.');
+                                      }
+                                    }}
+                                  >
+                                    제출하기
+                                  </Button>
+                                </div>
+                              ) : (
+                                <p className="text-xl font-bold text-yellow-400">문제 풀이 시간이 종료되었습니다.</p>
+                              )}
+                            </div>
+                          )}
+                          
+                          {!quizSession.session.is_question_open && quizLeaderboard ? (
+                            <div className="mt-4 rounded-xl border border-white/20 bg-black/20 p-4">
+                              <p className="mb-3 text-lg font-semibold text-[#ffdf6c]">실시간 순위 Top 5</p>
+                              <div className="space-y-2">
+                                {quizLeaderboard.leaderboard.slice(0, 5).map((lb, idx) => (
+                                  <div key={lb.student_id} className="flex justify-between rounded bg-white/5 px-3 py-2 text-sm font-semibold">
+                                    <span>{idx + 1}위: {lb.student_name}</span>
+                                    <span className="text-[#ffdf6c]">{lb.score.toLocaleString()} 점</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="space-y-6 text-center">
+                          <Trophy className="mx-auto size-20 text-[#ffdf6c]" />
+                          <h4 className="text-3xl font-bold">던전 클리어!</h4>
+                          <p className="text-[#a3b8d1]">수고하셨습니다. 최종 순위를 확인하세요.</p>
+                          
+                          {quizLeaderboard ? (
+                            <div className="mx-auto max-w-lg space-y-3 text-left">
+                              {quizLeaderboard.leaderboard.slice(0, 10).map((lb, idx) => (
+                                <div key={lb.student_id} className="flex justify-between rounded-lg bg-white/10 px-4 py-3 font-semibold">
+                                  <span>{idx + 1}위 {lb.student_name}</span>
+                                  <span className="text-[#ffdf6c]">{lb.score.toLocaleString()} 점</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          
+                          {canManageClassContent ? (
+                            <Button className="mt-6 cursor-pointer border border-[#5277a0] bg-[#1a385f]" onClick={() => { setQuizSession(null); refreshTeacherData(); }}>
+                              대기실로 돌아가기
+                            </Button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                          <h3 className="flex items-center gap-2 font-heading text-lg font-semibold text-slate-800"><FileSpreadsheet className="size-4" /> 문제 은행 및 퀴즈 출제</h3>
+                          <p className="mt-1 text-sm text-slate-500">체크박스로 문제를 골라 즉석에서 라이브 퀴즈 방을 만들 수 있습니다.</p>
+                        </div>
+                        {canManageClassContent ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-slate-600">제한시간</span>
+                            <input
+                              type="number"
+                              min={5}
+                              max={120}
+                              className="h-10 w-16 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                              value={quizTimeLimit}
+                              onChange={(e) => setQuizTimeLimit(Number(e.target.value))}
+                            />
+                            <span className="text-sm text-slate-600">초</span>
+                            <Button className="h-10 cursor-pointer border border-[#3b82f6] bg-[#eff6ff] text-[#1d4ed8] hover:bg-[#dbeafe]" onClick={handleCreateQuizSession} disabled={quizCreating}>
+                              {quizCreating ? '생성 중...' : `선택한 ${selectedQuestionIds.length}문제로 퀴즈 시작`}
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {canManageClassContent ? (
+                        <label className="flex h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[#c8d7ea] bg-[#f8fbff] p-4 text-center transition-colors duration-200 hover:bg-[#eef5ff]">
+                          <Upload className="mb-2 size-5 text-[#2563eb]" />
+                          <span className="text-sm font-medium text-[#1e3a8a]">엑셀/CSV 문제 은행 파일 업로드</span>
+                          <span className="text-xs text-[#5c7594]">권장 컬럼: subject, unit_name, prompt, answer, difficulty, bonus_attack</span>
+                          <input
+                            type="file"
+                            accept=".csv,.xlsx"
+                            className="hidden"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0]
+                              if (file) {
+                                void uploadQuestionFile(file)
+                              }
+                            }}
+                          />
+                        </label>
+                      ) : (
+                        <div className="rounded-2xl border border-[#d8e4f2] bg-white p-6 text-center shadow-sm">
+                          <h4 className="text-xl font-bold text-[#1e3a8a]">라이브 퀴즈 참가</h4>
+                          <p className="mt-2 text-sm text-[#4a678a]">선생님이 알려주신 6자리 PIN 번호를 입력하세요.</p>
+                          <div className="mx-auto mt-4 flex max-w-sm gap-2">
+                            <input 
+                              type="text" 
+                              maxLength={6}
+                              className="h-14 flex-1 rounded-xl border border-[#c9d9f0] bg-[#f8fbff] px-4 text-center font-mono text-2xl font-bold tracking-[0.3em] text-[#1e3a8a]"
+                              placeholder="000000"
+                              id="quiz-pin-input"
+                            />
+                            <Button 
+                              className="h-14 w-24 cursor-pointer bg-[#2563eb] text-lg font-bold text-white hover:bg-[#1d4ed8]"
+                              onClick={async () => {
+                                const pinInput = document.getElementById('quiz-pin-input') as HTMLInputElement;
+                                if (!pinInput?.value) return;
+                                try {
+                                  await api.post(`/quiz/sessions/${pinInput.value}/join?access_code=${studentDetail?.student.access_code || ''}`);
+                                  await refreshTeacherData(); // refresh data to load quizSession
+                                } catch {
+                                  setUploadMessage('PIN 번호가 올바르지 않거나 참가할 수 없는 퀴즈입니다.');
+                                }
+                              }}
+                            >
+                              입장
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {uploadMessage ? <p className="mt-3 text-sm font-semibold text-[#2563eb]">{uploadMessage}</p> : null}
+                      
+                      <div className="mt-6">
+                        <div className="mb-3 flex items-center justify-between">
+                          <p className="text-sm font-semibold text-[#1e3a8a]">문제 은행 목록 ({questions.length}개)</p>
+                          {canManageClassContent ? (
+                            <button
+                              type="button"
+                              className="text-xs font-semibold text-[#2563eb] hover:underline"
+                              onClick={() => {
+                                if (selectedQuestionIds.length === questions.length) {
+                                  setSelectedQuestionIds([])
+                                } else {
+                                  setSelectedQuestionIds(questions.map(q => q.id))
+                                }
+                              }}
+                            >
+                              {selectedQuestionIds.length === questions.length ? '전체 해제' : '전체 선택'}
+                            </button>
+                          ) : null}
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {questions.map((question) => (
+                            <label key={question.id} className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors duration-200 ${selectedQuestionIds.includes(question.id) ? 'border-[#3b82f6] bg-[#eff6ff] shadow-[0_0_0_1px_rgba(59,130,246,0.3)]' : 'border-[#dce8f6] bg-[#f8fbff] hover:bg-[#f1f6fd]'}`}>
+                              {canManageClassContent ? (
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 h-4 w-4 rounded border-[#a5c3e8] text-[#2563eb] focus:ring-[#2563eb]"
+                                  checked={selectedQuestionIds.includes(question.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedQuestionIds(prev => [...prev, question.id])
+                                    } else {
+                                      setSelectedQuestionIds(prev => prev.filter(id => id !== question.id))
+                                    }
+                                  }}
+                                />
+                              ) : null}
+                              <div className="flex-1 min-w-0 text-sm">
+                                <p className="font-semibold text-[#1e3a8a] break-words">[{question.subject}] {question.prompt}</p>
+                                <div className="mt-2 flex flex-wrap gap-1 text-xs">
+                                  <span className="rounded bg-[#e2e8f0] px-2 py-0.5 font-medium text-[#334155]">정답: {question.answer}</span>
+                                  <span className="rounded bg-[#dcfce7] px-2 py-0.5 font-medium text-[#166534]">난이도: {question.difficulty}</span>
+                                  <span className="rounded bg-[#fee2e2] px-2 py-0.5 font-medium text-[#991b1b]">공격 +{question.bonus_attack}</span>
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                          {questions.length === 0 ? (
+                            <div className="col-span-full rounded-xl border border-dashed border-[#c8d7ea] px-4 py-8 text-center text-sm text-[#5c7594]">
+                              등록된 문제가 없습니다. 위의 엑셀 업로드를 통해 문제를 등록해 주세요.
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
 

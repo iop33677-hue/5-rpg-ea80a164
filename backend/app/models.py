@@ -358,6 +358,67 @@ class RaidActionLog(Base):
     )
 
 
+class QuizSession(Base):
+    __tablename__ = "quiz_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    teacher_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    pin_code: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="lobby")  # lobby, playing, finished
+    current_question_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_question_open: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class QuizParticipant(Base):
+    __tablename__ = "quiz_participants"
+    __table_args__ = (
+        UniqueConstraint("quiz_session_id", "student_id", name="uq_quiz_participant_session_student"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_session_id: Mapped[int] = mapped_column(ForeignKey("quiz_sessions.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class QuizQuestion(Base):
+    __tablename__ = "quiz_questions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_session_id: Mapped[int] = mapped_column(ForeignKey("quiz_sessions.id"), index=True)
+    question_item_id: Mapped[int] = mapped_column(ForeignKey("question_bank_items.id"), index=True)
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    time_limit: Mapped[int] = mapped_column(Integer, default=20)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class QuizResponse(Base):
+    __tablename__ = "quiz_responses"
+    __table_args__ = (
+        UniqueConstraint("quiz_question_id", "student_id", name="uq_quiz_response_question_student"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_session_id: Mapped[int] = mapped_column(ForeignKey("quiz_sessions.id"), index=True)
+    quiz_question_id: Mapped[int] = mapped_column(ForeignKey("quiz_questions.id"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    submitted_answer: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    score_earned: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class GameWorldSetting(Base):
     __tablename__ = "game_world_settings"
 
@@ -483,4 +544,25 @@ QuestionFile.questions = relationship(
 )
 RaidSession.actions = relationship(
     "RaidActionLog", backref="raid_session", cascade="all,delete"
+)
+QuizSession.participants = relationship(
+    "QuizParticipant", backref="quiz_session", cascade="all,delete"
+)
+QuizSession.questions = relationship(
+    "QuizQuestion", backref="quiz_session", cascade="all,delete", order_by="QuizQuestion.order_index"
+)
+QuizSession.responses = relationship(
+    "QuizResponse", backref="quiz_session", cascade="all,delete"
+)
+QuizQuestion.bank_item = relationship(
+    "QuestionBankItem"
+)
+QuizQuestion.responses = relationship(
+    "QuizResponse", backref="quiz_question", cascade="all,delete"
+)
+QuizParticipant.student = relationship(
+    "Student"
+)
+QuizResponse.student = relationship(
+    "Student"
 )

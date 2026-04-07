@@ -980,3 +980,60 @@ class ClassroomOverview(BaseSchema):
 class StudentPortalSnapshot(BaseSchema):
     student: StudentRead
     active_raid: RaidSessionRead | None
+
+
+class QuizSessionCreate(BaseSchema):
+    title: str = Field(min_length=2, max_length=120)
+    question_ids: list[int] = Field(min_length=1)
+    time_limit: int = Field(default=20, ge=5, le=120)
+
+
+class QuizSessionRead(BaseSchema):
+    id: int
+    pin_code: str
+    title: str
+    status: str
+    current_question_index: int
+    is_question_open: bool
+    created_at: datetime
+
+
+class QuizParticipantRead(BaseSchema):
+    id: int
+    quiz_session_id: int
+    student_id: int
+    student_number: int
+    student_name: str
+    joined_at: datetime
+
+
+class QuizQuestionRead(BaseSchema):
+    id: int
+    quiz_session_id: int
+    question_item_id: int
+    order_index: int
+    time_limit: int
+    prompt: str
+    subject: str
+    answer: str | None = None
+
+
+class QuizResponseSubmit(BaseSchema):
+    submitted_answer: str = Field(min_length=1, max_length=200)
+    response_time_ms: int = Field(ge=0)
+
+
+class QuizResponseRead(BaseSchema):
+    id: int
+    quiz_question_id: int
+    student_id: int
+    submitted_answer: str
+    is_correct: bool
+    response_time_ms: int
+    score_earned: int
+
+
+class QuizSessionDetailRead(BaseSchema):
+    session: QuizSessionRead
+    participants: list[QuizParticipantRead]
+    questions: list[QuizQuestionRead]

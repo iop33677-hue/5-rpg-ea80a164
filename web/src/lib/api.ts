@@ -451,6 +451,74 @@ export interface StudentPortalSnapshot {
   active_raid: RaidSession | null
 }
 
+export interface QuizSessionCreate {
+  title: string
+  question_ids: number[]
+  time_limit?: number
+}
+
+export interface QuizSession {
+  id: number
+  pin_code: string
+  title: string
+  status: 'lobby' | 'playing' | 'finished' | string
+  current_question_index: number
+  is_question_open: boolean
+  created_at: string
+}
+
+export interface QuizParticipant {
+  id: number
+  quiz_session_id: number
+  student_id: number
+  student_number: number
+  student_name: string
+  joined_at: string
+}
+
+export interface QuizQuestion {
+  id: number
+  quiz_session_id: number
+  question_item_id: number
+  order_index: number
+  time_limit: number
+  prompt: string
+  subject: string
+  answer?: string
+}
+
+export interface QuizSessionDetail {
+  session: QuizSession
+  participants: QuizParticipant[]
+  questions: QuizQuestion[]
+}
+
+export interface QuizResponseSubmit {
+  submitted_answer: string
+  response_time_ms: number
+}
+
+export interface QuizResponse {
+  id: number
+  quiz_question_id: number
+  student_id: number
+  submitted_answer: string
+  is_correct: boolean
+  response_time_ms: number
+  score_earned: number
+}
+
+export interface QuizLeaderboardItem {
+  student_id: number
+  student_name: string
+  score: number
+  correct_count: number
+}
+
+export interface QuizLeaderboardResponse {
+  leaderboard: QuizLeaderboardItem[]
+}
+
 export interface UploadContract {
   upload_url: string
   method: 'PUT'

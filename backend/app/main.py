@@ -109,11 +109,13 @@ app.add_middleware(
 
 # Exception handling is done via exception handlers above (sync-compatible)
 
-from app.routers import auth_status, classroom, runtime_uploads
+from app.routers import auth_status, classroom, runtime_uploads, reset, quiz
 
 app.include_router(auth_status.router)
 app.include_router(classroom.router)
 app.include_router(runtime_uploads.router)
+app.include_router(reset.router)
+app.include_router(quiz.router)
 
 
 @app.on_event("startup")
