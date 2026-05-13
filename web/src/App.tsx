@@ -102,6 +102,7 @@ import {
   type LearningBoardUpdatePayload,
   type LearningBoardCreatePayload,
   type LearningBoardPostUpdatePayload,
+  type QuestionChoice,
   type QuestionItem,
   type MissionAchieverUpdateResult,
   type MissionCreatePayload,
@@ -133,6 +134,22 @@ interface ParsedQuestionRow {
   answer: string
   difficulty: string
   bonus_attack: number
+}
+
+interface AiDungeonFormState {
+  grade: string
+  semester: string
+  subject: string
+  unit: string
+  count: number
+  difficulty: string
+}
+
+interface QuizMonsterAsset {
+  public_url: string
+  object_key: string
+  original_filename: string
+  content_type: string
 }
 
 interface SidebarMenuItem {
@@ -613,6 +630,103 @@ const sidebarMenuItems: SidebarMenuItem[] = [
   { label: '학급 관리', icon: Settings2, section: '상점 및 관리' },
 ]
 
+const choiceKeys: QuestionChoice['key'][] = ['A', 'B', 'C', 'D']
+
+function buildPromptWithChoices(prompt: string, choices: Partial<Record<QuestionChoice['key'], string>>): string {
+  const filledChoices = choiceKeys
+    .map((key) => ({ key, text: choices[key]?.trim() ?? '' }))
+    .filter((choice) => choice.text.length > 0)
+
+  if (filledChoices.length === 0) {
+    return prompt
+  }
+
+  const choiceLines = filledChoices.map((choice) => `${choice.key}. ${choice.text}`).join('\n')
+  return `${prompt.trim()}\n\n[선택지]\n${choiceLines}`
+}
+
+function parseQuestionChoices(prompt: string): { cleanPrompt: string; choices: QuestionChoice[] } {
+  const lines = prompt.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const choices: QuestionChoice[] = []
+  const promptLines: string[] = []
+
+  for (const line of lines) {
+    if (line === '[선택지]') {
+      continue
+    }
+
+    const match = line.match(/^([A-Da-d]|[①②③④]|[1-4])[\).\s、:：-]+(.+)$/)
+    if (!match) {
+      promptLines.push(line)
+      continue
+    }
+
+    const rawKey = match[1]
+    const text = match[2]?.trim() ?? ''
+    const key = rawKey === '①' || rawKey === '1' ? 'A'
+      : rawKey === '②' || rawKey === '2' ? 'B'
+        : rawKey === '③' || rawKey === '3' ? 'C'
+          : rawKey === '④' || rawKey === '4' ? 'D'
+            : rawKey.toUpperCase() as QuestionChoice['key']
+
+    if (text.length > 0 && !choices.some((choice) => choice.key === key)) {
+      choices.push({ key, text })
+    }
+  }
+
+  return {
+    cleanPrompt: promptLines.join('\n').trim() || prompt,
+    choices: choices.sort((a, b) => choiceKeys.indexOf(a.key) - choiceKeys.indexOf(b.key)),
+  }
+}
+
+function normalizeChoiceAnswer(answer: string): string {
+  const normalized = answer.trim()
+  if (/^[A-Da-d]$/.test(normalized)) {
+    return normalized.toUpperCase()
+  }
+  if (normalized === '①' || normalized === '1') return 'A'
+  if (normalized === '②' || normalized === '2') return 'B'
+  if (normalized === '③' || normalized === '3') return 'C'
+  if (normalized === '④' || normalized === '4') return 'D'
+  return normalized
+}
+
+function getStudentAccessCodeFromStoredToken(): string {
+  if (typeof window === 'undefined') return ''
+  const token = window.localStorage.getItem('neon_auth_token') ?? ''
+  const parts = token.split(':')
+  return parts[0] === 'student' && parts.length >= 3 ? parts[2] : ''
+}
+
+function createAiAssistedDungeonQuestions(form: AiDungeonFormState): ParsedQuestionRow[] {
+  const count = Math.max(1, Math.min(10, Number(form.count) || 4))
+  const subject = form.subject.trim() || '통합'
+  const unit = form.unit.trim() || '핵심 개념'
+  const gradeSemester = `${form.grade.trim() || '초등'} ${form.semester.trim() || '1학기'}`
+
+  return Array.from({ length: count }, (_, index) => {
+    const key = choiceKeys[index % choiceKeys.length]
+    const concept = `${unit} ${index + 1}번 개념`
+    const choices: Partial<Record<QuestionChoice['key'], string>> = {
+      A: `${concept}의 핵심 정의`,
+      B: `${concept}와 관련 없는 설명`,
+      C: `${concept}의 반대 개념`,
+      D: `${concept}를 적용할 수 없는 예시`,
+    }
+    choices[key] = `${concept}을 가장 정확히 설명한 내용`
+
+    return {
+      subject,
+      unit_name: `${gradeSemester} · ${unit}`,
+      prompt: buildPromptWithChoices(`${subject} ${unit} 단원의 내용으로 옳은 것을 고르세요. (${index + 1})`, choices),
+      answer: key,
+      difficulty: form.difficulty || '보통',
+      bonus_attack: form.difficulty === '어려움' ? 15 : form.difficulty === '쉬움' ? 5 : 10,
+    }
+  })
+}
+
 function parseCsvRows(content: string): ParsedQuestionRow[] {
   const lines = content
     .split(/\r?\n/)
@@ -631,11 +745,19 @@ function parseCsvRows(content: string): ParsedQuestionRow[] {
       return idx >= 0 ? cols[idx] || '' : ''
     }
 
+    const rawPrompt = getValue(['prompt', 'question', '문제'])
+    const choices = {
+      A: getValue(['choice_a', 'a', '선택지a', '보기a']),
+      B: getValue(['choice_b', 'b', '선택지b', '보기b']),
+      C: getValue(['choice_c', 'c', '선택지c', '보기c']),
+      D: getValue(['choice_d', 'd', '선택지d', '보기d']),
+    }
+
     return {
       subject: getValue(['subject', '과목']) || '일반',
       unit_name: getValue(['unit', 'unit_name', '단원']) || null,
-      prompt: getValue(['prompt', 'question', '문제']),
-      answer: getValue(['answer', '정답']) || '미입력',
+      prompt: buildPromptWithChoices(rawPrompt, choices),
+      answer: normalizeChoiceAnswer(getValue(['correct_choice', 'answer', '정답', '정답선택지']) || '미입력'),
       difficulty: getValue(['difficulty', '난이도']) || '보통',
       bonus_attack: Number(getValue(['bonus_attack', 'attack', '보너스공격력']) || 5),
     }
@@ -652,11 +774,18 @@ function parseXlsxRows(data: ArrayBuffer): ParsedQuestionRow[] {
       Object.entries(row).map(([key, value]) => [key.toLowerCase(), String(value ?? '').trim()]),
     )
 
+    const choices = {
+      A: normalized.choice_a || normalized.a || normalized['선택지a'] || normalized['보기a'],
+      B: normalized.choice_b || normalized.b || normalized['선택지b'] || normalized['보기b'],
+      C: normalized.choice_c || normalized.c || normalized['선택지c'] || normalized['보기c'],
+      D: normalized.choice_d || normalized.d || normalized['선택지d'] || normalized['보기d'],
+    }
+
     return {
       subject: normalized.subject || normalized['과목'] || '일반',
       unit_name: normalized.unit || normalized.unit_name || normalized['단원'] || null,
-      prompt: normalized.prompt || normalized.question || normalized['문제'] || '',
-      answer: normalized.answer || normalized['정답'] || '미입력',
+      prompt: buildPromptWithChoices(normalized.prompt || normalized.question || normalized['문제'] || '', choices),
+      answer: normalizeChoiceAnswer(normalized.correct_choice || normalized.answer || normalized['정답선택지'] || normalized['정답'] || '미입력'),
       difficulty: normalized.difficulty || normalized['난이도'] || '보통',
       bonus_attack: Number(normalized.bonus_attack || normalized['보너스공격력'] || '5'),
     }
@@ -820,6 +949,21 @@ function App() {
   const [quizTimeLimit, setQuizTimeLimit] = useState(30)
   const [quizSession, setQuizSession] = useState<QuizSessionDetail | null>(null)
   const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardResponse | null>(null)
+  const [aiDungeonForm, setAiDungeonForm] = useState<AiDungeonFormState>({
+    grade: '초등 5학년',
+    semester: '1학기',
+    subject: '수학',
+    unit: '약수와 배수',
+    count: 4,
+    difficulty: '보통',
+  })
+  const [aiDraftQuestions, setAiDraftQuestions] = useState<ParsedQuestionRow[]>([])
+  const [aiGenerating, setAiGenerating] = useState(false)
+  const [quizMonsterAsset, setQuizMonsterAsset] = useState<QuizMonsterAsset | null>(null)
+  const [quizMonsterUploading, setQuizMonsterUploading] = useState(false)
+  const [studentHeartPoints, setStudentHeartPoints] = useState(100)
+  const [monsterHeartPoints, setMonsterHeartPoints] = useState(100)
+  const [studentSubmittedQuestionId, setStudentSubmittedQuestionId] = useState<number | null>(null)
   const [raid, setRaid] = useState<RaidSession | null>(null)
   const [raidLogs, setRaidLogs] = useState<RaidAction[]>([])
   const [loadingDashboard, setLoadingDashboard] = useState(false)
@@ -3794,6 +3938,73 @@ function App() {
     await refreshTeacherData()
   }
 
+  const handleGenerateAiDraftQuestions = async () => {
+    setAiGenerating(true)
+    try {
+      const generatedRows = createAiAssistedDungeonQuestions(aiDungeonForm)
+      setAiDraftQuestions(generatedRows)
+      setUploadMessage(`${generatedRows.length}개의 AI 보조 문제 초안을 만들었습니다. 검토 후 문제 은행에 반영하세요.`)
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
+  const handleApplyAiDraftQuestions = async () => {
+    if (aiDraftQuestions.length === 0) {
+      setUploadMessage('먼저 AI 보조 문제 초안을 생성해 주세요.')
+      return
+    }
+
+    setAiGenerating(true)
+    try {
+      const createdQuestions = await api.post<QuestionItem[]>('/classroom/questions/bulk', {
+        rows: aiDraftQuestions,
+      })
+      setAiDraftQuestions([])
+      setSelectedQuestionIds(createdQuestions.map((question) => question.id))
+      setUploadMessage(`${createdQuestions.length}개 문제를 문제 은행에 반영하고 자동 선택했습니다.`)
+      await refreshTeacherData()
+    } catch {
+      setUploadMessage('AI 보조 문제를 문제 은행에 반영하지 못했습니다.')
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
+  const handleUploadQuizMonsterImage = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setUploadMessage('몬스터 이미지는 이미지 파일만 업로드할 수 있습니다.')
+      return
+    }
+
+    setQuizMonsterUploading(true)
+    try {
+      const presign = await api.post<UploadContract>('/runtime-uploads/presign', {
+        filename: file.name,
+        content_type: file.type,
+        category: 'monster-image',
+      })
+
+      await fetch(presign.upload_url, {
+        method: 'PUT',
+        headers: presign.headers,
+        body: file,
+      })
+
+      setQuizMonsterAsset({
+        public_url: presign.public_url,
+        object_key: presign.object_key,
+        original_filename: presign.original_filename,
+        content_type: file.type,
+      })
+      setUploadMessage('몬스터 이미지를 던전 미리보기에 연결했습니다.')
+    } catch {
+      setUploadMessage('몬스터 이미지 업로드에 실패했습니다.')
+    } finally {
+      setQuizMonsterUploading(false)
+    }
+  }
+
   const handleCreateQuizSession = async () => {
     if (selectedQuestionIds.length === 0) {
       setUploadMessage('퀴즈에 출제할 문제를 1개 이상 선택해 주세요.')
@@ -3802,12 +4013,16 @@ function App() {
 
     setQuizCreating(true)
     try {
-      await api.post('/quiz/sessions', {
+      const createdSession = await api.post<QuizSessionDetail>('/quiz/sessions', {
         title: '오늘의 문제 던전 퀴즈',
         question_ids: selectedQuestionIds,
         time_limit: quizTimeLimit
       })
+      setQuizSession(createdSession)
       setSelectedQuestionIds([])
+      setStudentSubmittedQuestionId(null)
+      setStudentHeartPoints(100)
+      setMonsterHeartPoints(100)
       await refreshTeacherData()
     } catch {
       setUploadMessage('퀴즈 방 개설에 실패했습니다.')
@@ -3820,6 +4035,20 @@ function App() {
     if (!quizSession) return;
     try {
       await api.post(`/quiz/sessions/${quizSession.session.id}/state?status=${status}&current_question_index=${currentQuestionIndex}&is_question_open=${isQuestionOpen}`);
+      if (status === 'finished') {
+        setQuizSession({
+          ...quizSession,
+          session: {
+            ...quizSession.session,
+            status,
+            current_question_index: currentQuestionIndex,
+            is_question_open: isQuestionOpen,
+          },
+        })
+      } else {
+        const currentSession = await api.get<QuizSessionDetail>('/quiz/sessions/current');
+        setQuizSession(currentSession);
+      }
       await refreshTeacherData();
     } catch {
       setUploadMessage('상태 변경에 실패했습니다.');
@@ -5253,14 +5482,50 @@ function App() {
                         </div>
                       ) : quizSession.session.status === 'playing' ? (
                         <div className="space-y-6">
-                          <div className="flex justify-between">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                             <span className="rounded-full bg-white/20 px-3 py-1 text-sm font-semibold">문제 {quizSession.session.current_question_index + 1} / {quizSession.questions.length}</span>
                             <span className="rounded-full bg-white/20 px-3 py-1 text-sm font-semibold text-[#ffdf6c]">{quizSession.session.is_question_open ? '응답 진행 중' : '응답 종료 (정답 확인)'}</span>
                           </div>
-                          
-                          <div className="rounded-2xl bg-white/10 p-6 text-center">
-                            <p className="text-3xl font-bold">{canManageClassContent ? quizSession.questions[quizSession.session.current_question_index]?.prompt : '선생님 화면의 문제를 보고 풀어주세요!'}</p>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="rounded-2xl border border-rose-300/20 bg-black/20 p-4">
+                              <div className="mb-2 flex items-center justify-between text-sm font-bold text-rose-100">
+                                <span className="flex items-center gap-2"><Heart className="size-4 fill-rose-400 text-rose-400" /> 내 하트</span>
+                                <span>{studentHeartPoints}/100</span>
+                              </div>
+                              <div className="h-3 overflow-hidden rounded-full bg-white/10">
+                                <div className="h-full rounded-full bg-gradient-to-r from-rose-500 to-pink-400 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, studentHeartPoints))}%` }} />
+                              </div>
+                            </div>
+                            <div className="rounded-2xl border border-amber-300/20 bg-black/20 p-4">
+                              <div className="mb-2 flex items-center justify-between text-sm font-bold text-amber-100">
+                                <span className="flex items-center gap-2"><ShieldAlert className="size-4 text-amber-300" /> 몬스터 체력</span>
+                                <span>{monsterHeartPoints}/100</span>
+                              </div>
+                              <div className="h-3 overflow-hidden rounded-full bg-white/10">
+                                <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all duration-300" style={{ width: `${Math.max(0, Math.min(100, monsterHeartPoints))}%` }} />
+                              </div>
+                            </div>
                           </div>
+                          
+                          {(() => {
+                            const activeQuestion = quizSession.questions[quizSession.session.current_question_index]
+                            const parsedQuestion = parseQuestionChoices(activeQuestion?.prompt ?? '')
+                            return (
+                              <div className="rounded-2xl bg-white/10 p-6 text-center">
+                                <p className="text-2xl font-bold sm:text-3xl">{parsedQuestion.cleanPrompt || '문제를 불러오는 중입니다.'}</p>
+                                {canManageClassContent && parsedQuestion.choices.length > 0 ? (
+                                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                                    {parsedQuestion.choices.map((choice) => (
+                                      <div key={choice.key} className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-left text-base font-semibold">
+                                        <span className="mr-2 text-[#ffdf6c]">{choice.key}</span>{choice.text}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
+                          })()}
                           
                           {!quizSession.session.is_question_open && quizSession.questions[quizSession.session.current_question_index] ? (
                             <div className="rounded-2xl border border-emerald-500/30 bg-emerald-900/40 p-4 text-center">
@@ -5277,7 +5542,7 @@ function App() {
                                 </Button>
                               ) : (
                                 quizSession.session.current_question_index < quizSession.questions.length - 1 ? (
-                                  <Button className="h-12 flex-1 cursor-pointer bg-[#3169b8] text-lg font-bold hover:bg-[#255294]" onClick={() => updateQuizState('playing', quizSession.session.current_question_index + 1, true)}>
+                                  <Button className="h-12 flex-1 cursor-pointer bg-[#3169b8] text-lg font-bold hover:bg-[#255294]" onClick={() => { setStudentSubmittedQuestionId(null); updateQuizState('playing', quizSession.session.current_question_index + 1, true); }}>
                                     다음 문제로
                                   </Button>
                                 ) : (
@@ -5290,34 +5555,83 @@ function App() {
                           ) : (
                             <div className="rounded-2xl bg-black/20 p-6 text-center">
                               {quizSession.session.is_question_open ? (
-                                <div className="space-y-4">
-                                  <p className="text-lg font-semibold text-indigo-300">정답을 입력하세요</p>
-                                  <input 
-                                    type="text" 
-                                    id="student-answer-input"
-                                    className="h-14 w-full rounded-xl border border-indigo-400 bg-indigo-950 px-4 text-center text-xl font-bold text-white placeholder:text-indigo-300"
-                                    placeholder="정답 입력"
-                                  />
-                                  <Button 
-                                    className="h-14 w-full bg-indigo-600 text-lg font-bold hover:bg-indigo-700"
-                                    onClick={async () => {
-                                      const input = document.getElementById('student-answer-input') as HTMLInputElement;
-                                      if (!input?.value) return;
-                                      try {
-                                        await api.post(`/quiz/questions/${quizSession.questions[quizSession.session.current_question_index].id}/submit?access_code=${studentDetail?.student.access_code || ''}`, {
-                                          submitted_answer: input.value,
-                                          response_time_ms: 5000 // Mock time
-                                        });
-                                        setUploadMessage('제출 완료! 다른 학생들을 기다려주세요.');
-                                        input.disabled = true;
-                                      } catch {
-                                        setUploadMessage('제출 실패 또는 이미 제출했습니다.');
+                                (() => {
+                                  const activeQuestion = quizSession.questions[quizSession.session.current_question_index]
+                                  const parsedQuestion = parseQuestionChoices(activeQuestion?.prompt ?? '')
+                                  const accessCode = getStudentAccessCodeFromStoredToken() || studentDetail?.student.access_code || ''
+                                  const submitted = studentSubmittedQuestionId === activeQuestion?.id
+
+                                  const submitAnswer = async (answer: string) => {
+                                    if (!activeQuestion || submitted) return
+                                    try {
+                                      await api.post(`/quiz/questions/${activeQuestion.id}/submit?access_code=${accessCode}`, {
+                                        submitted_answer: answer,
+                                        response_time_ms: 5000
+                                      })
+                                      const normalizedSubmitted = normalizeChoiceAnswer(answer)
+                                      const normalizedCorrect = normalizeChoiceAnswer(activeQuestion.answer ?? '')
+                                      if (normalizedCorrect && normalizedSubmitted === normalizedCorrect) {
+                                        setMonsterHeartPoints((prev) => Math.max(0, prev - 10))
+                                        setUploadMessage('정답! 몬스터의 체력이 10 감소했습니다.')
+                                      } else {
+                                        setStudentHeartPoints((prev) => Math.max(0, prev - 10))
+                                        setUploadMessage('제출 완료! 오답이면 내 하트가 10 감소합니다.')
                                       }
-                                    }}
-                                  >
-                                    제출하기
-                                  </Button>
-                                </div>
+                                      setStudentSubmittedQuestionId(activeQuestion.id)
+                                    } catch {
+                                      setUploadMessage('제출 실패 또는 이미 제출했습니다.')
+                                    }
+                                  }
+
+                                  return (
+                                    <div className="space-y-4">
+                                      <p className="text-lg font-semibold text-indigo-200">정답을 선택하세요</p>
+                                      {quizMonsterAsset ? (
+                                        <div className="mx-auto flex max-w-xs items-center justify-center rounded-3xl border border-white/10 bg-black/20 p-3">
+                                          <img src={quizMonsterAsset.public_url} alt="문제 던전 몬스터" className="max-h-40 w-full object-contain" />
+                                        </div>
+                                      ) : null}
+                                      {parsedQuestion.choices.length >= 2 ? (
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                          {parsedQuestion.choices.map((choice) => (
+                                            <button
+                                              key={choice.key}
+                                              type="button"
+                                              disabled={submitted}
+                                              className="min-h-16 cursor-pointer rounded-2xl border border-indigo-300/40 bg-indigo-950/80 px-4 py-3 text-left font-bold text-white transition-colors duration-200 hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                              onClick={() => void submitAnswer(choice.key)}
+                                            >
+                                              <span className="mr-3 inline-flex size-8 items-center justify-center rounded-full bg-[#ffdf6c] text-sm font-black text-[#1e1b4b]">{choice.key}</span>
+                                              {choice.text}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-3">
+                                          <input 
+                                            type="text" 
+                                            id="student-answer-input"
+                                            disabled={submitted}
+                                            className="h-14 w-full rounded-xl border border-indigo-400 bg-indigo-950 px-4 text-center text-xl font-bold text-white placeholder:text-indigo-300 disabled:opacity-60"
+                                            placeholder="정답 입력"
+                                          />
+                                          <Button 
+                                            className="h-14 w-full cursor-pointer bg-indigo-600 text-lg font-bold hover:bg-indigo-700 disabled:opacity-60"
+                                            disabled={submitted}
+                                            onClick={async () => {
+                                              const input = document.getElementById('student-answer-input') as HTMLInputElement
+                                              if (!input?.value) return
+                                              await submitAnswer(input.value)
+                                            }}
+                                          >
+                                            제출하기
+                                          </Button>
+                                        </div>
+                                      )}
+                                      {submitted ? <p className="rounded-xl bg-emerald-500/15 px-4 py-3 text-sm font-bold text-emerald-200">제출 완료! 선생님이 다음 진행을 안내할 때까지 기다려 주세요.</p> : null}
+                                    </div>
+                                  )
+                                })()
                               ) : (
                                 <p className="text-xl font-bold text-yellow-400">문제 풀이 시간이 종료되었습니다.</p>
                               )}
@@ -5365,47 +5679,160 @@ function App() {
                     </div>
                   ) : (
                     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-                      <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                      <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                         <div>
                           <h3 className="flex items-center gap-2 font-heading text-lg font-semibold text-slate-800"><FileSpreadsheet className="size-4" /> 문제 은행 및 퀴즈 출제</h3>
-                          <p className="mt-1 text-sm text-slate-500">체크박스로 문제를 골라 즉석에서 라이브 퀴즈 방을 만들 수 있습니다.</p>
+                          <p className="mt-1 text-sm text-slate-500">교사가 문제를 고르고 몬스터 이미지를 붙여 Kahoot형 전투 퀴즈 던전을 열 수 있습니다.</p>
                         </div>
                         {canManageClassContent ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-slate-600">제한시간</span>
+                          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#d7e6fb] bg-[#f8fbff] p-2">
+                            <span className="pl-2 text-sm font-semibold text-slate-600">제한시간</span>
                             <input
                               type="number"
                               min={5}
                               max={120}
-                              className="h-10 w-16 rounded-lg border border-[#c9d9f0] px-3 text-sm"
+                              className="h-10 w-20 rounded-lg border border-[#c9d9f0] px-3 text-sm"
                               value={quizTimeLimit}
                               onChange={(e) => setQuizTimeLimit(Number(e.target.value))}
                             />
                             <span className="text-sm text-slate-600">초</span>
                             <Button className="h-10 cursor-pointer border border-[#3b82f6] bg-[#eff6ff] text-[#1d4ed8] hover:bg-[#dbeafe]" onClick={handleCreateQuizSession} disabled={quizCreating}>
-                              {quizCreating ? '생성 중...' : `선택한 ${selectedQuestionIds.length}문제로 퀴즈 시작`}
+                              {quizCreating ? '생성 중...' : `선택한 ${selectedQuestionIds.length}문제로 던전 열기`}
                             </Button>
                           </div>
                         ) : null}
                       </div>
 
                       {canManageClassContent ? (
-                        <label className="flex h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[#c8d7ea] bg-[#f8fbff] p-4 text-center transition-colors duration-200 hover:bg-[#eef5ff]">
-                          <Upload className="mb-2 size-5 text-[#2563eb]" />
-                          <span className="text-sm font-medium text-[#1e3a8a]">엑셀/CSV 문제 은행 파일 업로드</span>
-                          <span className="text-xs text-[#5c7594]">권장 컬럼: subject, unit_name, prompt, answer, difficulty, bonus_attack</span>
-                          <input
-                            type="file"
-                            accept=".csv,.xlsx"
-                            className="hidden"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0]
-                              if (file) {
-                                void uploadQuestionFile(file)
-                              }
-                            }}
-                          />
-                        </label>
+                        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+                          <div className="space-y-4">
+                            <div className="rounded-3xl border border-[#d7e6fb] bg-gradient-to-br from-[#eff6ff] via-white to-[#f7f3ff] p-4 shadow-sm">
+                              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                <div className="flex items-start gap-3">
+                                  <div className="rounded-2xl bg-[#dbeafe] p-3 text-[#2563eb]"><WandSparkles className="size-5" /></div>
+                                  <div>
+                                    <p className="font-heading text-base font-bold text-[#172554]">AI 문제 생성 보조</p>
+                                    <p className="mt-1 text-sm text-[#52677f]">학년·학기·과목·단원을 입력하면 4지선다 문제 초안을 만들어 문제 은행에 넣을 수 있습니다.</p>
+                                  </div>
+                                </div>
+                                <Button className="h-11 cursor-pointer bg-[#4f46e5] text-white hover:bg-[#4338ca]" onClick={handleGenerateAiDraftQuestions} disabled={aiGenerating}>
+                                  {aiGenerating ? '생성 중...' : 'AI로 문제 초안 만들기'}
+                                </Button>
+                              </div>
+                              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                                <label className="space-y-1 text-sm font-semibold text-[#334155]">
+                                  학년
+                                  <input className="h-11 w-full rounded-xl border border-[#cbd5e1] px-3 font-normal" value={aiDungeonForm.grade} onChange={(e) => setAiDungeonForm((prev) => ({ ...prev, grade: e.target.value }))} />
+                                </label>
+                                <label className="space-y-1 text-sm font-semibold text-[#334155]">
+                                  학기
+                                  <input className="h-11 w-full rounded-xl border border-[#cbd5e1] px-3 font-normal" value={aiDungeonForm.semester} onChange={(e) => setAiDungeonForm((prev) => ({ ...prev, semester: e.target.value }))} />
+                                </label>
+                                <label className="space-y-1 text-sm font-semibold text-[#334155]">
+                                  과목
+                                  <input className="h-11 w-full rounded-xl border border-[#cbd5e1] px-3 font-normal" value={aiDungeonForm.subject} onChange={(e) => setAiDungeonForm((prev) => ({ ...prev, subject: e.target.value }))} />
+                                </label>
+                                <label className="space-y-1 text-sm font-semibold text-[#334155]">
+                                  단원
+                                  <input className="h-11 w-full rounded-xl border border-[#cbd5e1] px-3 font-normal" value={aiDungeonForm.unit} onChange={(e) => setAiDungeonForm((prev) => ({ ...prev, unit: e.target.value }))} />
+                                </label>
+                                <label className="space-y-1 text-sm font-semibold text-[#334155]">
+                                  문항 수
+                                  <input type="number" min={1} max={10} className="h-11 w-full rounded-xl border border-[#cbd5e1] px-3 font-normal" value={aiDungeonForm.count} onChange={(e) => setAiDungeonForm((prev) => ({ ...prev, count: Number(e.target.value) }))} />
+                                </label>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {['쉬움', '보통', '어려움'].map((difficulty) => (
+                                  <button
+                                    key={difficulty}
+                                    type="button"
+                                    className={`h-10 cursor-pointer rounded-full border px-4 text-sm font-semibold transition-colors duration-200 ${aiDungeonForm.difficulty === difficulty ? 'border-[#4f46e5] bg-[#eef2ff] text-[#3730a3]' : 'border-[#dbe4f0] bg-white text-[#52677f] hover:bg-[#f8fafc]'}`}
+                                    onClick={() => setAiDungeonForm((prev) => ({ ...prev, difficulty }))}
+                                  >
+                                    {difficulty}
+                                  </button>
+                                ))}
+                              </div>
+                              {aiDraftQuestions.length > 0 ? (
+                                <div className="mt-4 rounded-2xl border border-[#c7d2fe] bg-white/80 p-3">
+                                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-sm font-bold text-[#3730a3]">생성된 초안 {aiDraftQuestions.length}개</p>
+                                    <Button className="h-9 cursor-pointer bg-[#16a34a] text-white hover:bg-[#15803d]" onClick={handleApplyAiDraftQuestions} disabled={aiGenerating}>문제 은행에 반영</Button>
+                                  </div>
+                                  <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                                    {aiDraftQuestions.map((draft, index) => {
+                                      const parsed = parseQuestionChoices(draft.prompt)
+                                      return (
+                                        <div key={`${draft.prompt}-${index}`} className="rounded-xl bg-[#f8fafc] p-3 text-sm">
+                                          <p className="font-semibold text-[#1e3a8a]">{index + 1}. {parsed.cleanPrompt}</p>
+                                          <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                                            {parsed.choices.map((choice) => <span key={choice.key} className="rounded-lg bg-white px-2 py-1 text-xs text-[#475569]">{choice.key}. {choice.text}</span>)}
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <label className="flex h-32 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[#c8d7ea] bg-[#f8fbff] p-4 text-center transition-colors duration-200 hover:bg-[#eef5ff]">
+                              <Upload className="mb-2 size-5 text-[#2563eb]" />
+                              <span className="text-sm font-medium text-[#1e3a8a]">엑셀/CSV 문제 은행 파일 업로드</span>
+                              <span className="text-xs text-[#5c7594]">권장 컬럼: subject, unit_name, prompt, choice_a~choice_d, correct_choice, difficulty, bonus_attack</span>
+                              <input
+                                type="file"
+                                accept=".csv,.xlsx"
+                                className="hidden"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0]
+                                  if (file) {
+                                    void uploadQuestionFile(file)
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="rounded-3xl border border-[#312e81] bg-gradient-to-br from-[#1e1b4b] via-[#312e81] to-[#111827] p-4 text-white shadow-xl">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#c4b5fd]">Monster Preview</p>
+                                <h4 className="mt-1 font-heading text-xl font-bold">문제 던전 보스</h4>
+                              </div>
+                              <div className="rounded-full bg-black/25 px-3 py-1 text-sm font-bold text-[#fef3c7]">HP {monsterHeartPoints}</div>
+                            </div>
+                            <div className="mt-4 flex min-h-52 items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-black/25">
+                              {quizMonsterAsset ? (
+                                <img src={quizMonsterAsset.public_url} alt="업로드한 문제 던전 몬스터" className="h-full max-h-64 w-full object-contain p-3" />
+                              ) : (
+                                <div className="p-6 text-center">
+                                  <ShieldAlert className="mx-auto size-14 text-[#facc15]" />
+                                  <p className="mt-3 text-sm font-semibold text-[#ddd6fe]">첨부한 몬스터 이미지가 이곳에 표시됩니다.</p>
+                                </div>
+                              )}
+                            </div>
+                            <label className="mt-4 flex h-12 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-white/20 bg-white/10 text-sm font-bold text-white transition-colors duration-200 hover:bg-white/15">
+                              <ImagePlus className="size-4" />
+                              {quizMonsterUploading ? '업로드 중...' : '몬스터 이미지 첨부'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                disabled={quizMonsterUploading}
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0]
+                                  if (file) void handleUploadQuizMonsterImage(file)
+                                }}
+                              />
+                            </label>
+                            {quizMonsterAsset ? (
+                              <button type="button" className="mt-2 w-full cursor-pointer text-xs font-semibold text-[#c4b5fd] hover:text-white" onClick={() => setQuizMonsterAsset(null)}>
+                                이미지 제거
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
                       ) : (
                         <div className="rounded-2xl border border-[#d8e4f2] bg-white p-6 text-center shadow-sm">
                           <h4 className="text-xl font-bold text-[#1e3a8a]">라이브 퀴즈 참가</h4>
@@ -5424,8 +5851,14 @@ function App() {
                                 const pinInput = document.getElementById('quiz-pin-input') as HTMLInputElement;
                                 if (!pinInput?.value) return;
                                 try {
-                                  await api.post(`/quiz/sessions/${pinInput.value}/join?access_code=${studentDetail?.student.access_code || ''}`);
-                                  await refreshTeacherData(); // refresh data to load quizSession
+                                  const accessCode = getStudentAccessCodeFromStoredToken() || studentDetail?.student.access_code || '';
+                                  await api.post(`/quiz/sessions/${pinInput.value}/join?access_code=${accessCode}`);
+                                  const currentSession = await api.get<QuizSessionDetail>('/quiz/sessions/current');
+                                  setQuizSession(currentSession);
+                                  setStudentSubmittedQuestionId(null);
+                                  setStudentHeartPoints(100);
+                                  setMonsterHeartPoints(100);
+                                  await refreshTeacherData();
                                 } catch {
                                   setUploadMessage('PIN 번호가 올바르지 않거나 참가할 수 없는 퀴즈입니다.');
                                 }
@@ -5459,32 +5892,43 @@ function App() {
                           ) : null}
                         </div>
                         <div className="grid gap-2 md:grid-cols-2">
-                          {questions.map((question) => (
-                            <label key={question.id} className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors duration-200 ${selectedQuestionIds.includes(question.id) ? 'border-[#3b82f6] bg-[#eff6ff] shadow-[0_0_0_1px_rgba(59,130,246,0.3)]' : 'border-[#dce8f6] bg-[#f8fbff] hover:bg-[#f1f6fd]'}`}>
-                              {canManageClassContent ? (
-                                <input
-                                  type="checkbox"
-                                  className="mt-1 h-4 w-4 rounded border-[#a5c3e8] text-[#2563eb] focus:ring-[#2563eb]"
-                                  checked={selectedQuestionIds.includes(question.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedQuestionIds(prev => [...prev, question.id])
-                                    } else {
-                                      setSelectedQuestionIds(prev => prev.filter(id => id !== question.id))
-                                    }
-                                  }}
-                                />
-                              ) : null}
-                              <div className="flex-1 min-w-0 text-sm">
-                                <p className="font-semibold text-[#1e3a8a] break-words">[{question.subject}] {question.prompt}</p>
-                                <div className="mt-2 flex flex-wrap gap-1 text-xs">
-                                  <span className="rounded bg-[#e2e8f0] px-2 py-0.5 font-medium text-[#334155]">정답: {question.answer}</span>
-                                  <span className="rounded bg-[#dcfce7] px-2 py-0.5 font-medium text-[#166534]">난이도: {question.difficulty}</span>
-                                  <span className="rounded bg-[#fee2e2] px-2 py-0.5 font-medium text-[#991b1b]">공격 +{question.bonus_attack}</span>
+                          {questions.map((question) => {
+                            const parsedQuestion = parseQuestionChoices(question.prompt)
+                            return (
+                              <label key={question.id} className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition-colors duration-200 ${selectedQuestionIds.includes(question.id) ? 'border-[#3b82f6] bg-[#eff6ff] shadow-[0_0_0_1px_rgba(59,130,246,0.3)]' : 'border-[#dce8f6] bg-[#f8fbff] hover:bg-[#f1f6fd]'}`}>
+                                {canManageClassContent ? (
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4 rounded border-[#a5c3e8] text-[#2563eb] focus:ring-[#2563eb]"
+                                    checked={selectedQuestionIds.includes(question.id)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedQuestionIds(prev => [...prev, question.id])
+                                      } else {
+                                        setSelectedQuestionIds(prev => prev.filter(id => id !== question.id))
+                                      }
+                                    }}
+                                  />
+                                ) : null}
+                                <div className="flex-1 min-w-0 text-sm">
+                                  <p className="font-semibold text-[#1e3a8a] break-words">[{question.subject}] {parsedQuestion.cleanPrompt}</p>
+                                  {parsedQuestion.choices.length > 0 ? (
+                                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                                      {parsedQuestion.choices.map((choice) => (
+                                        <span key={choice.key} className="rounded-lg bg-white px-2 py-1 text-xs font-medium text-[#475569] shadow-sm">{choice.key}. {choice.text}</span>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                  <div className="mt-2 flex flex-wrap gap-1 text-xs">
+                                    <span className="rounded bg-[#e2e8f0] px-2 py-0.5 font-medium text-[#334155]">정답: {normalizeChoiceAnswer(question.answer)}</span>
+                                    <span className="rounded bg-[#dcfce7] px-2 py-0.5 font-medium text-[#166534]">난이도: {question.difficulty}</span>
+                                    <span className="rounded bg-[#fee2e2] px-2 py-0.5 font-medium text-[#991b1b]">공격 +{question.bonus_attack}</span>
+                                    {parsedQuestion.choices.length > 0 ? <span className="rounded bg-[#eef2ff] px-2 py-0.5 font-medium text-[#3730a3]">4지선다</span> : null}
+                                  </div>
                                 </div>
-                              </div>
-                            </label>
-                          ))}
+                              </label>
+                            )
+                          })}
                           {questions.length === 0 ? (
                             <div className="col-span-full rounded-xl border border-dashed border-[#c8d7ea] px-4 py-8 text-center text-sm text-[#5c7594]">
                               등록된 문제가 없습니다. 위의 엑셀 업로드를 통해 문제를 등록해 주세요.

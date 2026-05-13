@@ -413,6 +413,11 @@ export interface FundingProjectDetail {
   contributions: FundingContribution[]
 }
 
+export interface QuestionChoice {
+  key: 'A' | 'B' | 'C' | 'D'
+  text: string
+}
+
 export interface QuestionItem {
   id: number
   subject: string
@@ -421,6 +426,7 @@ export interface QuestionItem {
   answer: string
   difficulty: string
   bonus_attack: number
+  choices?: QuestionChoice[]
 }
 
 export interface RaidSession {
@@ -485,6 +491,7 @@ export interface QuizQuestion {
   prompt: string
   subject: string
   answer?: string
+  choices?: QuestionChoice[]
 }
 
 export interface QuizSessionDetail {
