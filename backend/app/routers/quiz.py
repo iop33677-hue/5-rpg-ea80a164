@@ -17,7 +17,7 @@ router = APIRouter(prefix="/quiz", tags=["quiz"])
 def generate_pin_code() -> str:
     return "".join(random.choices(string.digits, k=6))
 
-@router.post("/sessions", response_model=QuizSessionRead)
+@router.post("/sessions", response_model=QuizSessionDetailRead)
 def create_quiz_session(quiz: QuizSessionCreate, db: Session = Depends(get_db)):
     # Verify all question_ids exist
     questions = db.query(QuestionBankItem).filter(QuestionBankItem.id.in_(quiz.question_ids)).all()
@@ -52,7 +52,29 @@ def create_quiz_session(quiz: QuizSessionCreate, db: Session = Depends(get_db)):
         db.add(qq)
     
     db.commit()
-    return session
+
+    session_questions = db.query(QuizQuestion).filter(
+        QuizQuestion.quiz_session_id == session.id
+    ).order_by(QuizQuestion.order_index).all()
+
+    question_reads = []
+    for q in session_questions:
+        question_reads.append(QuizQuestionRead(
+            id=q.id,
+            quiz_session_id=q.quiz_session_id,
+            question_item_id=q.question_item_id,
+            order_index=q.order_index,
+            time_limit=q.time_limit,
+            prompt=q.bank_item.prompt,
+            subject=q.bank_item.subject,
+            answer=q.bank_item.answer
+        ))
+
+    return QuizSessionDetailRead(
+        session=session,
+        participants=[],
+        questions=question_reads
+    )
 
 @router.get("/sessions/current", response_model=QuizSessionDetailRead)
 def get_current_quiz_session(db: Session = Depends(get_db)):

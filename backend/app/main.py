@@ -15,6 +15,26 @@ logger = setup_logging()
 
 app = FastAPI(title="FastAPI Starter API", version="1.0.0", redirect_slashes=False)
 
+
+@app.on_event("startup")
+def ensure_database_tables() -> None:
+    """Optionally create missing tables without blocking server startup.
+
+    Preview health checks must not depend on a live database connection. Alembic
+    migrations are the primary schema path, so the startup schema sync is
+    disabled by default and can be explicitly enabled for local repair tasks via
+    ENABLE_STARTUP_SCHEMA_SYNC=1.
+    """
+    if os.getenv("ENABLE_STARTUP_SCHEMA_SYNC", "").strip().lower() not in {"1", "true", "yes"}:
+        return
+
+    try:
+        from app.database import Base, get_engine
+
+        Base.metadata.create_all(bind=get_engine())
+    except Exception as exc:  # pragma: no cover - optional repair guard
+        logger.warning("Database table check skipped: %s", exc)
+
 # App Attest — auto-injected for Apple apps with backend
 try:
     from app.app_attest import AppAttestMiddleware, router as app_attest_router
@@ -67,8 +87,16 @@ def _allowed_origins_from_env() -> list[str]:
     if parsed_origins:
         return parsed_origins
 
+    fallback_origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
     frontend_origin = _normalize_origin(os.getenv("FRONTEND_URL"))
-    return [frontend_origin] if frontend_origin else []
+    if frontend_origin and frontend_origin not in seen:
+        return [frontend_origin, *fallback_origins]
+    return fallback_origins
 
 
 # Catch unhandled exceptions INSIDE the CORS middleware so 500 responses

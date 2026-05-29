@@ -764,6 +764,7 @@ function App() {
   const [raid, setRaid] = useState<RaidSession | null>(null)
   const [raidLogs, setRaidLogs] = useState<RaidAction[]>([])
   const [loadingDashboard, setLoadingDashboard] = useState(false)
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('checking')
 
   const [sortBy, setSortBy] = useState<'student_number' | 'level'>('student_number')
   const [cards, setCards] = useState<ClassroomCard[]>([])
@@ -2223,6 +2224,34 @@ function App() {
       setLearningBoardMessage('댓글 삭제에 실패했습니다.')
     }
   }
+
+  useEffect(() => {
+    let isMounted = true
+
+    const checkBackendHealth = async () => {
+      setBackendStatus('checking')
+      try {
+        await api.get<{ status: string }>('/health')
+        if (isMounted) {
+          setBackendStatus('connected')
+        }
+      } catch {
+        if (isMounted) {
+          setBackendStatus('unavailable')
+        }
+      }
+    }
+
+    void checkBackendHealth()
+    const intervalId = window.setInterval(() => {
+      void checkBackendHealth()
+    }, 30000)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+    }
+  }, [])
 
   useEffect(() => {
     if (authUser) {
@@ -4147,6 +4176,38 @@ function App() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
+            <div
+              className={`flex h-10 min-w-10 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors duration-200 ${
+                backendStatus === 'connected'
+                  ? 'border-emerald-300/50 bg-emerald-400/15 text-emerald-100'
+                  : backendStatus === 'checking'
+                    ? 'border-sky-300/40 bg-sky-400/15 text-sky-100'
+                    : 'border-amber-300/50 bg-amber-400/15 text-amber-100'
+              }`}
+              aria-label={
+                backendStatus === 'connected'
+                  ? '서버 연결됨'
+                  : backendStatus === 'checking'
+                    ? '서버 연결 확인 중'
+                    : '서버 연결 확인 필요'
+              }
+              title={
+                backendStatus === 'connected'
+                  ? '서버 연결됨'
+                  : backendStatus === 'checking'
+                    ? '서버 연결 확인 중'
+                    : '서버 연결 확인 필요'
+              }
+            >
+              <Activity className="size-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">
+                {backendStatus === 'connected'
+                  ? '서버 연결됨'
+                  : backendStatus === 'checking'
+                    ? '확인 중'
+                    : '서버 확인 필요'}
+              </span>
+            </div>
             <button
               type="button"
               aria-label="쪽지함"
